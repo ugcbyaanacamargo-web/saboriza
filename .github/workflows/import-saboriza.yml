@@ -1,0 +1,70 @@
+name: Extract original Saboriza project for deployment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/import-saboriza.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-original-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Extract supplied project ZIP without modifying files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+
+          archive_path = Path("Saboriza-Catalogo-main.zip")
+          expected_sha256 = "c35df440785109a689166eb8707b28d915fad89f2759e71fa255d54c4ee924d3"
+          actual_sha256 = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+          if actual_sha256 != expected_sha256:
+              raise SystemExit("The ZIP is not the exact user-supplied Saboriza archive.")
+
+          total = 0
+          with ZipFile(archive_path) as archive:
+              for entry in archive.infolist():
+                  parts = PurePosixPath(entry.filename).parts
+                  if not parts or parts[0] != "Saboriza-Catalogo-main":
+                      raise SystemExit("Unexpected path in ZIP: " + entry.filename)
+                  if len(parts) == 1 or entry.is_dir():
+                      continue
+                  relative = parts[1:]
+                  if any(part in (".", "..", ".git", ".github") for part in relative):
+                      raise SystemExit("Unsafe ZIP path: " + entry.filename)
+                  output = Path.cwd().joinpath(*relative)
+                  contents = archive.read(entry)
+                  if output.exists():
+                      if output.read_bytes() != contents:
+                          raise SystemExit("Existing file differs; refusing to overwrite: " + str(output))
+                  else:
+                      output.parent.mkdir(parents=True, exist_ok=True)
+                      output.write_bytes(contents)
+                  total += 1
+          if total != 126:
+              raise SystemExit("Expected exactly 126 project files; found " + str(total))
+          print("Verified and extracted exactly", total, "unaltered files")
+          PY
+      - name: Commit original project files to main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          if git diff --cached --quiet; then
+            echo "Original project files are already present."
+          else
+            git commit -m "Import original 126 Saboriza files without code changes"
+            git push origin HEAD:main
+          fi
