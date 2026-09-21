@@ -1,0 +1,36 @@
+name: Validate Saboriza deployment build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "src/**"
+      - "public/**"
+      - "vite.config.ts"
+      - "tsconfig.json"
+      - "vercel.json"
+      - "netlify.toml"
+      - ".github/workflows/validate-saboriza.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies exactly from lockfile
+        run: npm ci
+      - name: Verify production build
+        run: npm run build
+      - name: Verify deployment entry point
+        run: test -s dist/index.html
