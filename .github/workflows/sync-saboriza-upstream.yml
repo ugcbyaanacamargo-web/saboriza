@@ -1,0 +1,114 @@
+name: Propor atualizacoes do Saboriza original
+
+on:
+  schedule:
+    # Horario UTC; GitHub pode atrasar execucoes agendadas.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync-saboriza-upstream.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sincronizar-saboriza-original
+  cancel-in-progress: false
+
+jobs:
+  propose-upstream-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout do nosso Saboriza
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Consultar versao atual do repositorio original
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main \
+            https://github.com/Ruanzinn01/Saboriza-Catalogo.git \
+            "$RUNNER_TEMP/saboriza-original"
+          echo "sha=$(git -C "$RUNNER_TEMP/saboriza-original" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Copiar codigo original preservando particularidades do nosso projeto
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/saboriza-original"
+          # Essas duas versoes locais possuem ajustes proprios de configuracao
+          # e autorizacao. Nunca substitui-las automaticamente.
+          rsync -a --delete \
+            --exclude='/main.tsx' \
+            --exclude='/store/admin-auth-store.ts' \
+            "$SOURCE/src/" ./src/
+          rsync -a --delete "$SOURCE/public/" ./public/
+          rsync -a --delete "$SOURCE/scripts/" ./scripts/
+          for file in \
+            index.html package.json package-lock.json \
+            tsconfig.json vercel.json vite.config.ts \
+            .env.example .gitignore \
+            "SABORIZA_MODULOS (guia de fases).md"; do
+            if test -f "$SOURCE/$file"; then
+              cp "$SOURCE/$file" "$file"
+            fi
+          done
+          # Sem tocar .github, supabase, README, ZIP,
+          # ajustes da hospedagem ou variaveis privadas.
+          git status --short
+
+      - name: Verificar se a versao proposta compila
+        id: build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Propor atualizacao para revisao sem alterar main
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/saboriza-original
+          delete-branch: true
+          commit-message: "chore: preparar atualizacao do Saboriza original"
+          title: "Atualizar codigo do Saboriza original"
+          body: |
+            Atualizacao detectada de [Ruanzinn01/Saboriza-Catalogo](https://github.com/Ruanzinn01/Saboriza-Catalogo).
+
+            Commit de origem: ${{ steps.upstream.outputs.sha }}
+            Build local desta proposta: ${{ steps.build.outcome }}
+
+            **Revisao humana obrigatoria antes do merge/deploy:**
+            - As migracoes em `scripts/*.sql` do original NAO sao aplicadas no Supabase automaticamente.
+            - A base real (produtos, fotos, usuarios e pedidos) NAO e copiada pelo GitHub.
+            - As versoes locais de `src/main.tsx` e `src/store/admin-auth-store.ts` foram mantidas.
+            - Comparar o novo frontend com o banco e as permissoes da instalacao propria;
+              aplicar migracoes necessarias de forma aditiva e verificar os fluxos.
+            - Conferir eventuais arquivos excluidos no diff antes de aprovar.
+          add-paths: |
+            src
+            public
+            scripts
+            index.html
+            package.json
+            package-lock.json
+            tsconfig.json
+            vercel.json
+            vite.config.ts
+            .env.example
+            .gitignore
+            SABORIZA_MODULOS (guia de fases).md
+
+      - name: Sinalizar proposta com build falhando
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::error::O codigo novo nao passou no build. Nao aprove a proposta antes de corrigir."
+          exit 1
