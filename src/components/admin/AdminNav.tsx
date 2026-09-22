@@ -1,11 +1,18 @@
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
+  Archive,
   BarChart3,
   Boxes,
+  Building2,
   ClipboardCheck,
   ClipboardList,
+  Database,
   Factory,
+  LayoutDashboard,
+  Minus,
   Package,
+  Plus,
   Settings,
   TrendingUp,
   Truck,
@@ -15,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { healthLevel } from "@/lib/stock-insights";
+import { slugify } from "@/lib/slugify";
 import { useCatalogStore } from "@/store/catalog-store";
 import { useOrdersStore } from "@/store/orders-store";
 
@@ -33,12 +41,14 @@ export interface NavItem {
 
 export interface NavGroup {
   label: string;
+  icon: LucideIcon;
   items: NavItem[];
 }
 
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Visão geral",
+    icon: LayoutDashboard,
     items: [
       { to: "/admin", label: "Indicadores", icon: TrendingUp, end: true },
       { to: "/admin/pedidos", label: "Pedidos", icon: ClipboardList, badge: "newOrders" },
@@ -46,6 +56,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Cadastros",
+    icon: Database,
     items: [
       { to: "/admin/produtos", label: "Produtos", icon: Package, alsoActiveFor: ["/admin/categorias"] },
       { to: "/admin/clientes", label: "Clientes", icon: Users },
@@ -54,6 +65,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Fábrica",
+    icon: Building2,
     items: [
       { to: "/admin/materias-primas", label: "Matérias-primas", icon: Boxes },
       { to: "/admin/produzir", label: "Produziu, Registra", icon: ClipboardCheck, highlight: true },
@@ -62,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Estoque",
+    icon: Archive,
     items: [
       { to: "/admin/estoque", label: "Estoque", icon: Warehouse, excludePrefixes: ["/admin/estoque/indicadores"], badge: "criticalStock" },
       { to: "/admin/estoque/indicadores", label: "Indicadores de estoque", icon: BarChart3 },
@@ -78,6 +91,10 @@ export function isNavItemActive(pathname: string, item: NavItem): boolean {
   return pathname === item.to || pathname.startsWith(`${item.to}/`);
 }
 
+function activeGroupFor(pathname: string): NavGroup | undefined {
+  return NAV_GROUPS.find((group) => group.items.some((item) => isNavItemActive(pathname, item)));
+}
+
 export function useNavBadges(): Record<NavBadgeKey, number> {
   const newOrders = useOrdersStore((state) => state.orders.filter((order) => order.status === "NEW").length);
   const criticalStock = useCatalogStore((state) => state.products.filter((product) => product.active && healthLevel(product) === "red").length);
@@ -86,22 +103,54 @@ export function useNavBadges(): Record<NavBadgeKey, number> {
 
 type NavVariant = "sidebar" | "sheet";
 
-const variantClasses: Record<NavVariant, { item: string; active: string; idle: string; group: string; badge: Record<NavBadgeKey, string> }> = {
+const variantClasses: Record<
+  NavVariant,
+  { item: string; active: string; idle: string; group: string; groupHover: string; badge: Record<NavBadgeKey, string>; dot: string; divider: string }
+> = {
   sidebar: {
     item: "text-cream-100/85",
     active: "bg-cream-50/10 text-cream-50 before:bg-gold-500",
     idle: "hover:bg-cream-50/5 hover:text-cream-50",
-    group: "text-gold-400/80",
+    group: "text-cream-50 before:bg-gold-500/70",
+    groupHover: "hover:bg-cream-50/5",
     badge: { newOrders: "bg-gold-500 text-forest-950", criticalStock: "bg-red-500 text-white" },
+    dot: "bg-gold-500",
+    divider: "border-cream-50/10",
   },
   sheet: {
     item: "text-ink-900",
     active: "bg-forest-950/5 text-forest-950 before:bg-gold-500",
     idle: "hover:bg-ink-900/5",
-    group: "text-gold-600",
+    group: "text-ink-900 before:bg-gold-600/70",
+    groupHover: "hover:bg-ink-900/5",
     badge: { newOrders: "bg-gold-500 text-forest-950", criticalStock: "bg-red-600 text-white" },
+    dot: "bg-gold-600",
+    divider: "border-ink-900/10",
   },
 };
+
+function storageKey(variant: NavVariant) {
+  return `saboriza:admin:nav-open-groups:${variant}`;
+}
+
+function loadOpenGroups(variant: NavVariant): string[] | null {
+  try {
+    const raw = localStorage.getItem(storageKey(variant));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveOpenGroups(variant: NavVariant, labels: string[]) {
+  try {
+    localStorage.setItem(storageKey(variant), JSON.stringify(labels));
+  } catch {
+    // localStorage indisponível (aba privada, etc.): o estado só não persiste entre sessões
+  }
+}
 
 interface AdminNavProps {
   variant: NavVariant;
@@ -112,6 +161,34 @@ export function AdminNav({ variant, onNavigate }: AdminNavProps) {
   const { pathname } = useLocation();
   const badges = useNavBadges();
   const styles = variantClasses[variant];
+
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
+    const stored = loadOpenGroups(variant);
+    if (stored) return new Set(stored);
+    const active = activeGroupFor(pathname);
+    return new Set(active ? [active.label] : []);
+  });
+
+  useEffect(() => {
+    const active = activeGroupFor(pathname);
+    if (active && !openGroups.has(active.label)) {
+      setOpenGroups((prev) => new Set(prev).add(active.label));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  useEffect(() => {
+    saveOpenGroups(variant, [...openGroups]);
+  }, [variant, openGroups]);
+
+  function toggleGroup(label: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }
 
   function renderItem(item: NavItem) {
     const active = isNavItemActive(pathname, item);
@@ -151,14 +228,45 @@ export function AdminNav({ variant, onNavigate }: AdminNavProps) {
   }
 
   return (
-    <nav aria-label="Menu do administrador" className="flex flex-col gap-5">
-      {NAV_GROUPS.map((group) => (
-        <div key={group.label} className="flex flex-col gap-1">
-          <p className={cn("px-3 font-mono text-[10px] font-semibold uppercase tracking-[0.2em]", styles.group)}>{group.label}</p>
-          {group.items.map(renderItem)}
-        </div>
-      ))}
-      <div className="flex flex-col gap-1">{renderItem(SETTINGS_ITEM)}</div>
+    <nav aria-label="Menu do administrador" className="flex flex-col gap-1.5">
+      {NAV_GROUPS.map((group) => {
+        const isOpen = openGroups.has(group.label);
+        const panelId = `nav-panel-${variant}-${slugify(group.label)}`;
+        const pendingBadge = group.items.some((item) => item.badge && badges[item.badge] > 0);
+        const inertProps = (isOpen ? {} : { inert: "" }) as Record<string, string>;
+
+        return (
+          <div key={group.label} className="flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => toggleGroup(group.label)}
+              aria-expanded={isOpen}
+              aria-controls={panelId}
+              className={cn(
+                "relative flex min-h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition-colors before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-full",
+                styles.group,
+                styles.groupHover
+              )}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg">
+                <group.icon size={18} />
+              </span>
+              <span className="flex-1 truncate">{group.label}</span>
+              {!isOpen && pendingBadge && <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", styles.dot)} />}
+              {isOpen ? <Minus size={14} aria-hidden className="shrink-0" /> : <Plus size={14} aria-hidden className="shrink-0" />}
+            </button>
+            <div
+              id={panelId}
+              className={cn("grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]", isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}
+            >
+              <div className="flex flex-col gap-1 overflow-hidden" {...inertProps}>
+                {group.items.map(renderItem)}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      <div className={cn("mt-1 flex flex-col gap-1 border-t pt-2", styles.divider)}>{renderItem(SETTINGS_ITEM)}</div>
     </nav>
   );
 }
