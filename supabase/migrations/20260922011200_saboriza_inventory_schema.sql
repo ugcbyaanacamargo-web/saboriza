@@ -81,6 +81,7 @@ create table if not exists public.raw_material_entries (
   reversal_reason text,
   reversed_at timestamptz,
   reversed_by uuid references auth.users(id) on delete set null,
+  confirmed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -130,7 +131,7 @@ create index if not exists production_consumptions_material_idx
 create table if not exists public.stock_movements (
   id text primary key default gen_random_uuid()::text,
   product_id text not null references public.products(id) on delete restrict,
-  variation numeric(18,4) not null check (variation <> 0),
+  variation numeric(18,4) not null,
   origin text not null check (origin in ('production','entry','order','adjustment')),
   reference_id text,
   responsible_id uuid references auth.users(id) on delete set null,
