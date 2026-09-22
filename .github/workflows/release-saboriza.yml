@@ -7,6 +7,8 @@ on:
       - "src/**"
       - "public/**"
       - "scripts/check-schema-contract.mjs"
+      - "scripts/classify-upstream-changes.mjs"
+      - "scripts/classify-upstream-changes.test.mjs"
       - "supabase/migrations/**"
       - "supabase/tests/**"
       - "package.json"
@@ -57,6 +59,7 @@ jobs:
         run: |
           node scripts/check-schema-contract.mjs
           npm ci
+          node --test scripts/classify-upstream-changes.test.mjs
           npm run build
 
       - name: Instalar ferramenta oficial Supabase
