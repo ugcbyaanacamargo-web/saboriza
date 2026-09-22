@@ -14,6 +14,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  issues: write
 
 concurrency:
   group: sincronizar-saboriza-original
@@ -131,6 +132,19 @@ jobs:
             .env.example
             .gitignore
             SABORIZA_MODULOS (guia de fases).md
+
+      - name: Avisar no GitHub quando uma atualizacao precisa de migracao ou revisao
+        if: ${{ steps.risk.outputs.review_required == 'true' && steps.pr.outputs.pull-request-operation == 'created' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+          SOURCE_SHA: ${{ steps.upstream.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "Saboriza: atualizacao original requer revisao tecnica" \
+            --body "A versao original \`$SOURCE_SHA\` incluiu SQL, contrato de banco, configuracoes protegidas ou arquivos que a automacao nao pode validar so com build. Proposta: $PR_URL. O deploy anterior continua no ar. Para liberar a atualizacao, adicione as migrations corretas quando necessarias e execute os testes antes do merge; nao copie dados comerciais do desenvolvedor."
 
       - name: Bloquear proposta sem SQL compativel
         if: steps.schema.outcome == 'failure'
