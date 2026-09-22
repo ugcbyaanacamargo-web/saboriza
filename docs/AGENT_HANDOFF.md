@@ -81,12 +81,13 @@ administradas pelo Supabase Storage.
 ## 4. Publicacao continua: banco ANTES da Vercel
 
 - `sync-saboriza-upstream.yml` consulta o original aproximadamente a cada
-  15 minutos (agendamento GitHub pode atrasar). Alteracoes restritas a UI,
-  estilos, assets e metadados passam por npm ci/build/contrato SQL e podem
-  ser incorporadas automaticamente. O workflow entao inicia explicitamente
-  o release Supabase -> verificacao -> Vercel por `workflow_dispatch`.
-  Mudancas em SQL, tipos de banco, stores, backend e dependencias ficam em PR
-  aguardando migrations e revisao. Nao copia dados do banco original.
+  15 minutos (agendamento GitHub pode atrasar). Mudancas de codigo, stores,
+  frontend e dependencias que preservam o contrato `src/types/supabase.ts`
+  e nao alteram SQL/segredos/configuracoes locais podem ser incorporadas
+  automaticamente apos classificacao, testes e build. O workflow inicia
+  explicitamente release Supabase -> verificacao -> Vercel por
+  `workflow_dispatch`. Mudancas em SQL/contrato do banco ficam em PR,
+  aguardando a migration completa e revisao. Nao copia dados do banco original.
 - PR com novas tabelas, colunas ou funcoes exige migrations aditivas no
   repositorio proprio, seguindo `src/types/supabase.ts`. Nao fazer merge
   automatico de SQL desconhecido nem copiar `vercel.json` do desenvolvedor.

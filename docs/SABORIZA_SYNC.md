@@ -13,14 +13,17 @@ instalacao original por mocks.
 
 1. A cada ~15 minutos (com possiveis atrasos do agendador GitHub),
    `sync-saboriza-upstream.yml` consulta a `main` original e prepara um PR.
-   Se SOMENTE interface/estilos/assets/metadados mudaram, e npm ci, build
-   e contrato SQL passaram, o mesmo workflow faz o merge do PR e dispara
-   `release-saboriza.yml` por `workflow_dispatch` (push com GITHUB_TOKEN nao
-   dispara outros workflows). Quando mudam tipos/banco, SQL, stores, APIs,
-   dependencias ou arquivos fora da lista segura, o PR continua aberto ate
-   revisao e eventual migration correspondente. Nao ha merge incondicional.
+   Se o codigo e dependencias evoluirem SEM alterar `src/types/supabase.ts`,
+   scripts SQL, autenticacao, conexao ao banco, configuracoes locais ou caminhos
+   inesperados, e se classificacao, npm ci, testes e build passarem, a automacao
+   faz merge do PR e dispara `release-saboriza.yml` por `workflow_dispatch`
+   (push com GITHUB_TOKEN nao inicia outro workflow). Inclui atualizacoes nos
+   stores, componentes e regras TypeScript que preservam o contrato do banco.
+   Uma alteracao em SQL/contrato do banco fica em PR exigindo migracao fiel,
+   autorizacoes RLS e testes antes do deploy; nao existe DDL universal que
+   possa ser gerado com seguranca apenas do frontend. Nao ha merge incondicional.
    Autenticacao, migrations, workflows e chaves locais sao preservados.
-2. `validate-saboriza.yml` testa build e confronta tabelas e RPCs das definicoes
+2. `validate-saboriza.yml` testa a classificacao, o build e confronta tabelas e RPCs das definicoes
    TypeScript com `supabase/migrations/*.sql`. Se o autor nao versionou a
    criacao de uma tabela, e preciso adicionar no NOSSO repositorio uma migration
    aditiva e revisada; seus arquivos em `scripts/*.sql` nao sao suficientes.
