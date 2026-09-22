@@ -11,9 +11,15 @@ A atualizacao do codigo NAO basta: toda nova tabela, coluna e funcao deve existi
 nosso Supabase. Nunca execute SQL remoto nao revisado nem substitua os dados da
 instalacao original por mocks.
 
-1. A cada hora, `sync-saboriza-upstream.yml` consulta a branch main original e
-   prepara um PR. Arquivos proprios (autenticacao, migrations, workflows, chaves)
-   sao preservados. O PR NAO faz merge nem executa scripts SQL.
+1. A cada ~15 minutos (com possiveis atrasos do agendador GitHub),
+   `sync-saboriza-upstream.yml` consulta a `main` original e prepara um PR.
+   Se SOMENTE interface/estilos/assets/metadados mudaram, e npm ci, build
+   e contrato SQL passaram, o mesmo workflow faz o merge do PR e dispara
+   `release-saboriza.yml` por `workflow_dispatch` (push com GITHUB_TOKEN nao
+   dispara outros workflows). Quando mudam tipos/banco, SQL, stores, APIs,
+   dependencias ou arquivos fora da lista segura, o PR continua aberto ate
+   revisao e eventual migration correspondente. Nao ha merge incondicional.
+   Autenticacao, migrations, workflows e chaves locais sao preservados.
 2. `validate-saboriza.yml` testa build e confronta tabelas e RPCs das definicoes
    TypeScript com `supabase/migrations/*.sql`. Se o autor nao versionou a
    criacao de uma tabela, e preciso adicionar no NOSSO repositorio uma migration
