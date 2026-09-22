@@ -18,44 +18,45 @@ instalacao original por mocks.
    TypeScript com `supabase/migrations/*.sql`. Se o autor nao versionou a
    criacao de uma tabela, e preciso adicionar no NOSSO repositorio uma migration
    aditiva e revisada; seus arquivos em `scripts/*.sql` nao sao suficientes.
-3. APOS aprovacao e merge no main, `release-saboriza.yml` (proposta neste PR)
+3. APOS aprovacao e merge no main, `release-saboriza.yml`
    valida o codigo, aplica SOMENTE as migrations versionadas no NOSSO banco
-   via Supabase CLI, verifica todas as tabelas, colunas, RPCs e RLS reais, e so
-   entao publica com Vercel CLI. Um erro bloqueia a publicacao. O site
+   via Supabase CLI, verifica todas as tabelas, colunas, RPCs e RLS reais,
+   executa testes transacionais com ROLLBACK, e so entao publica com Vercel CLI. Um erro bloqueia a publicacao. O site
    atualmente no ar permanece acessivel quando a nova publicacao falha.
-4. No `vercel.json` a integracao automatica do Git no branch main sera
-   desativada APENAS quando este PR de release for aprovado, porque publicacao
-   concorrente do GitHub/Vercel poderia ocorrer antes da migration. Preview
+4. No `vercel.json` a integracao automatica do Git no branch main esta
+   desativada para evitar publicacao antes da migration. Preview
    de outros branches continua habilitado.
 
-## Uma configuracao de seguranca necessaria no GitHub
+## Secrets e acesso de release
 
-Antes de fazer merge no PR de release, crie **dois Actions secrets**
-no repositorio de destino:
-
+O workflow usa `SUPABASE_DB_URL` e `VERCEL_TOKEN` em GitHub Actions Secrets:
 https://github.com/ugcbyaanacamargo-web/saboriza/settings/secrets/actions
 
-- `SUPABASE_DB_URL`: URL PostgreSQL do NOSSO projeto `saborizasu`, com
-  senha e SSL, preferencialmente a connection string Session pooler (IPv4).
-  Copie no Dashboard Supabase > Connect, nao da conta do desenvolvedor.
-- `VERCEL_TOKEN`: token de acesso a NOSSA equipe/projeto na Vercel.
-  https://vercel.com/account/tokens
+A connection string deve apontar SOMENTE para `saborizasu`, e o token para a
+equipe/projeto do destino na Vercel. Nunca adicionar valores no repositorio,
+em issues, em PRs, em chat ou em variaveis publicas `VITE_*`.
 
-**Nao** coloque essas credenciais no codigo, em issue, PR, mensagem ou variavel
-`VITE_*`. Os IDs de projeto/equipe ja estao configurados no workflow.
-Depois dos secrets e do merge do PR de release, GitHub Actions e o unico
-responsavel pela publicacao da branch main, na ordem banco -> verificacao -> site.
-Os valores dos secrets nunca sao visiveis pela integracao GitHub.
+## Atualizacao de 21/09/2026 aplicada
 
-## Situacao da atualizacao de 21/09/2026
+A origem no commit `2818fbe01b50640146be487345acd4d1048f8a51` exige
+**16 tabelas e 8 RPCs**. As migrations aditivas para a versao foram aplicadas
+ao banco proprio:
+- `20260922011200_saboriza_inventory_schema.sql`
+- `20260922011300_saboriza_inventory_rpc.sql`
+- `20260922012000_saboriza_admin_sequences.sql`
 
-A proposta original em PR #1 exige **16 tabelas e 8 RPCs** segundo
-`src/types/supabase.ts`. A versao anterior do NOSSO banco tinha
-**9 tabelas e 2 RPCs**. O autor publico versionou apenas cinco SQLs aditivos
-em `scripts/`, sem as migrations-base dos modulos de producao e estoque.
-A migracao dessas funcoes precisa ser reconstruida a partir do contrato de codigo,
-com transacoes, seguranca RLS e testes de producao; nao se deve inventar funcoes
-temporarias ou ligar o frontend novo antes disso.
+Os testes em `supabase/tests/stock_production_smoke.sql` passaram no banco real:
+recebimento, estorno, custo medio, ficha tecnica, producao com falta de
+insumo, movimentacao e ajuste de estoque, pedido com falta de estoque e
+idempotencia. Tudo em transacao `ROLLBACK`, sem dados ficticios persistidos.
+
+O frontend da origem foi incorporado em PR #1 (merge
+`a4bf3eda1b26189a4f866b79bfcf476a647e2338`) e publicado na Vercel.
+O GitHub Actions deve continuar sendo a unica rota de deploy `main`.
+O script de sincronizacao preserva `vercel.json` e troca as URLs de
+metadados no `index.html` para o dominio `saboriza-pied.vercel.app`.
+
+## Limites
 
 O codigo-fonte e as migrations **nao sao backups dos dados originais**: produtos,
 fotografias, historico de pedidos e credenciais so podem ser migrados do projeto
