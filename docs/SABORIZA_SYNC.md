@@ -21,7 +21,10 @@ instalacao original por mocks.
    stores, componentes e regras TypeScript que preservam o contrato do banco.
    Uma alteracao em SQL/contrato do banco fica em PR exigindo migracao fiel,
    autorizacoes RLS e testes antes do deploy; nao existe DDL universal que
-   possa ser gerado com seguranca apenas do frontend. Nao ha merge incondicional.
+   possa ser gerado com seguranca apenas do frontend.
+   Quando uma PR bloqueada e aberta pela primeira vez, o workflow tambem cria
+   uma Issue no GitHub para avisar que a nova versao precisa de revisao,
+   sem notificacoes repetidas a cada verificacao agendada. Nao ha merge incondicional.
    Autenticacao, migrations, workflows e chaves locais sao preservados.
 2. `validate-saboriza.yml` testa a classificacao, o build e confronta tabelas e RPCs das definicoes
    TypeScript com `supabase/migrations/*.sql`. Se o autor nao versionou a
