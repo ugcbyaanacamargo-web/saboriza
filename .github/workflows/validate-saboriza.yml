@@ -1,6 +1,8 @@
 name: Validate Saboriza deployment build
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths:
@@ -14,6 +16,8 @@ on:
       - "vercel.json"
       - "netlify.toml"
       - ".github/workflows/validate-saboriza.yml"
+      - "supabase/migrations/**"
+      - "scripts/check-schema-contract.mjs"
   workflow_dispatch:
 
 permissions:
@@ -30,6 +34,8 @@ jobs:
           cache: "npm"
       - name: Install dependencies exactly from lockfile
         run: npm ci
+      - name: Verify frontend and versioned SQL schema contract
+        run: node scripts/check-schema-contract.mjs
       - name: Verify production build
         run: npm run build
       - name: Verify deployment entry point
