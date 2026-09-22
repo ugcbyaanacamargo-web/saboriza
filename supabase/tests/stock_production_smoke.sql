@@ -63,7 +63,7 @@ begin
   if v<>10 then raise exception 'Production product stock wrong: %',v; end if;
   blocked:=false;
   begin
-    perform public.create_production(p,2);
+    perform public.create_production(p,3);
   exception when others then
     if position('Estoque insuficiente' in sqlerrm)>0 then blocked:=true;
     else raise; end if;
