@@ -1,0 +1,99 @@
+name: Deploy Saboriza - Supabase antes da Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "scripts/check-schema-contract.mjs"
+      - "supabase/migrations/**"
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "vercel.json"
+      - "vite.config.ts"
+      - "tsconfig.json"
+      - ".github/workflows/release-saboriza.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saboriza-producao
+  cancel-in-progress: false
+
+jobs:
+  schema-then-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: team_uxYzObukO7cmmgbRMJF4PvO0
+      VERCEL_PROJECT_ID: prj_56lkAIKiIcwPHOXIUFiAFr3MUUDz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Exigir credenciais privadas antes de alterar producao
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SUPABASE_DB_URL" || -z "$VERCEL_TOKEN" ]]; then
+            echo "::error::Configure GitHub Actions secrets SUPABASE_DB_URL e VERCEL_TOKEN. Nada alterado."
+            exit 1
+          fi
+          echo "::add-mask::$SUPABASE_DB_URL"
+          echo "::add-mask::$VERCEL_TOKEN"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Validar contrato versionado e build antes de tocar no banco
+        run: |
+          node scripts/check-schema-contract.mjs
+          npm ci
+          npm run build
+
+      - name: Instalar ferramenta oficial Supabase
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Aplicar somente migracoes locais ja aprovadas no main
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase db push --db-url "$SUPABASE_DB_URL" --yes
+
+      - name: Verificar tabelas, colunas, funcoes e RLS no banco real
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          node scripts/check-schema-contract.mjs --expected-sql > "$RUNNER_TEMP/saboriza-schema-check.sql"
+          psql -X -qAt -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" \
+            -f "$RUNNER_TEMP/saboriza-schema-check.sql" \
+            > "$RUNNER_TEMP/saboriza-schema-result.json"
+          node scripts/check-schema-contract.mjs --verify-json "$RUNNER_TEMP/saboriza-schema-result.json"
+
+      - name: Instalar Vercel CLI
+        run: npm install --global vercel
+
+      - name: Obter configuracao de producao Vercel
+        shell: bash
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Construir artefato de producao apos validar Supabase
+        shell: bash
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Publicar o mesmo artefato na Vercel
+        shell: bash
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
