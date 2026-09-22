@@ -51,7 +51,11 @@ jobs:
             --exclude='/store/admin-auth-store.ts' \
             "$SOURCE/src/" ./src/
           rsync -a --delete "$SOURCE/public/" ./public/
-          rsync -a --delete --exclude="/check-schema-contract.mjs" "$SOURCE/scripts/" ./scripts/
+          rsync -a --delete \
+            --exclude="/check-schema-contract.mjs" \
+            --exclude="/classify-upstream-changes.mjs" \
+            --exclude="/classify-upstream-changes.test.mjs" \
+            "$SOURCE/scripts/" ./scripts/
           for file in \
             index.html package.json package-lock.json \
             tsconfig.json vite.config.ts \
@@ -69,24 +73,10 @@ jobs:
           # ajustes da hospedagem ou variaveis privadas.
           git status --short
 
-      - name: Classificar atualizacao para liberacao automatica
+      - name: Classificar alteracoes compativeis com nosso Supabase
         id: risk
         shell: bash
-        run: |
-          set -euo pipefail
-          # Fail closed: only presentation-only changes can auto-merge.
-          # API, store, type, dependencies, migrations and SQL need review.
-          changes="$(git status --porcelain --untracked-files=all | cut -c4-)"
-          auto=true
-          if [[ -z "$changes" ]]; then auto=false; fi
-          while IFS= read -r file; do
-            [[ -z "$file" ]] && continue
-            case "$file" in
-              src/components/*|src/pages/*|src/index.css|src/lib/number.ts|public/*|index.html) ;;
-              *) auto=false; echo "::notice::Revisao necessaria para $file" ;;
-            esac
-          done <<< "$changes"
-          echo "auto=$auto" >> "$GITHUB_OUTPUT"
+        run: node scripts/classify-upstream-changes.mjs "$RUNNER_TEMP/saboriza-original"
 
       - name: Verificar se a versao proposta compila
         id: build
@@ -95,6 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
+          node --test scripts/classify-upstream-changes.test.mjs
           npm run build
 
       - name: Auditar compatibilidade do SQL versionado
@@ -116,10 +107,10 @@ jobs:
             Commit de origem: ${{ steps.upstream.outputs.sha }}
             Build local desta proposta: ${{ steps.build.outcome }}
             Compatibilidade das migrations versionadas: ${{ steps.schema.outcome }}
-            Atualizacao de baixo risco para merge automatico: ${{ steps.risk.outputs.auto }}
+            Atualizacao sem alteracao de contrato SQL e arquivos protegidos: ${{ steps.risk.outputs.auto }}
 
-            **Merge automatico apenas para alteracoes de interface sem mudancas de banco, API, estados, dependencias ou scripts.**
-            Quando essa condicao nao for atendida, revisao humana e migrations sao obrigatorias antes de publicar:
+            **Merge automatico de codigo e dependencias quando contrato Supabase, migrations e configuracoes proprias permanecem inalterados, e build/testes passam.**
+            Quando essa condicao nao for atendida, a atualizacao fica em PR ate existir migration correta ou revisao:
             - As migracoes originais em `scripts/*.sql` NAO sao executadas diretamente no banco.
             - Toda nova tabela e RPC deve ter SQL adaptado, revisado e versionado em `supabase/migrations/`.
             - Enquanto a checagem do contrato falhar, esta PR NAO pode ser publicada.
@@ -153,7 +144,7 @@ jobs:
           echo "::error::O codigo novo nao passou no build. Nao aprove a proposta antes de corrigir."
           exit 1
 
-      - name: Incorporar interface compativel e iniciar release banco primeiro
+      - name: Incorporar atualizacao compativel e iniciar release banco primeiro
         if: ${{ steps.build.outcome == 'success' && steps.schema.outcome == 'success' && steps.risk.outputs.auto == 'true' && steps.pr.outputs.pull-request-number != '' }}
         shell: bash
         env:
