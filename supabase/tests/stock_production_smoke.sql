@@ -100,4 +100,30 @@ begin
   if (select count(*) from public.stock_movements where origin='order' and reference_id=o)<>1
     then raise exception 'Order completion debited inventory twice'; end if;
 end $$;
+-- Switch to a simulated authenticated account without the app_metadata admin role.
+reset role;
+do $$
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated","app_metadata":{}}',true);
+end $$;
+set local role authenticated;
+do $$
+declare blocked boolean:=false;
+begin
+  if public.saboriza_is_admin() then
+    raise exception 'Unprivileged JWT incorrectly considered admin';
+  end if;
+  begin
+    perform public.create_stock_entry('nonexistent',1,'not authorized');
+  exception when others then
+    if position('Acesso administrativo obrigatório' in sqlerrm)>0 then
+      blocked:=true;
+    else raise; end if;
+  end;
+  if not blocked then raise exception 'Nonadmin RPC was allowed'; end if;
+  if exists(select 1 from public.raw_materials) then
+    raise exception 'Nonadmin could read raw materials';
+  end if;
+end $$;
 rollback;
