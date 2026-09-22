@@ -18,6 +18,8 @@ on:
       - ".github/workflows/validate-saboriza.yml"
       - "supabase/migrations/**"
       - "scripts/check-schema-contract.mjs"
+      - "scripts/classify-upstream-changes.mjs"
+      - "scripts/classify-upstream-changes.test.mjs"
   workflow_dispatch:
 
 permissions:
@@ -34,6 +36,8 @@ jobs:
           cache: "npm"
       - name: Install dependencies exactly from lockfile
         run: npm ci
+      - name: Test safe upstream-release classification
+        run: node --test scripts/classify-upstream-changes.test.mjs
       - name: Verify frontend and versioned SQL schema contract
         run: node scripts/check-schema-contract.mjs
       - name: Verify production build
