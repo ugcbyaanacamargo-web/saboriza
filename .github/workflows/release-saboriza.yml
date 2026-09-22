@@ -8,6 +8,7 @@ on:
       - "public/**"
       - "scripts/check-schema-contract.mjs"
       - "supabase/migrations/**"
+      - "supabase/tests/**"
       - "package.json"
       - "package-lock.json"
       - "index.html"
@@ -82,6 +83,13 @@ jobs:
             -f "$RUNNER_TEMP/saboriza-schema-check.sql" \
             > "$RUNNER_TEMP/saboriza-schema-result.json"
           node scripts/check-schema-contract.mjs --verify-json "$RUNNER_TEMP/saboriza-schema-result.json"
+
+      - name: Testar recebimento, estorno, estoque, producao e pedido (ROLLBACK)
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -X -qAt -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" \
+            -f supabase/tests/stock_production_smoke.sql
 
       - name: Instalar Vercel CLI
         run: npm install --global vercel
