@@ -53,14 +53,14 @@ jobs:
           rsync -a --delete --exclude="/check-schema-contract.mjs" "$SOURCE/scripts/" ./scripts/
           for file in \
             index.html package.json package-lock.json \
-            tsconfig.json vercel.json vite.config.ts \
+            tsconfig.json vite.config.ts \
             .env.example .gitignore \
             "SABORIZA_MODULOS (guia de fases).md"; do
             if test -f "$SOURCE/$file"; then
               cp "$SOURCE/$file" "$file"
             fi
           done
-          # Sem tocar .github, supabase, README, ZIP,
+          # Sem tocar .github, supabase, vercel.json, README, ZIP,
           # ajustes da hospedagem ou variaveis privadas.
           git status --short
 
@@ -109,7 +109,6 @@ jobs:
             package.json
             package-lock.json
             tsconfig.json
-            vercel.json
             vite.config.ts
             .env.example
             .gitignore
