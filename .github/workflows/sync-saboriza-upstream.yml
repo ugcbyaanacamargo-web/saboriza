@@ -50,7 +50,7 @@ jobs:
             --exclude='/store/admin-auth-store.ts' \
             "$SOURCE/src/" ./src/
           rsync -a --delete "$SOURCE/public/" ./public/
-          rsync -a --delete "$SOURCE/scripts/" ./scripts/
+          rsync -a --delete --exclude="/check-schema-contract.mjs" "$SOURCE/scripts/" ./scripts/
           for file in \
             index.html package.json package-lock.json \
             tsconfig.json vercel.json vite.config.ts \
@@ -73,6 +73,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Auditar compatibilidade do SQL versionado
+        id: schema
+        continue-on-error: true
+        run: node scripts/check-schema-contract.mjs
+
       - name: Propor atualizacao para revisao sem alterar main
         uses: peter-evans/create-pull-request@v8
         with:
@@ -85,9 +90,12 @@ jobs:
 
             Commit de origem: ${{ steps.upstream.outputs.sha }}
             Build local desta proposta: ${{ steps.build.outcome }}
+            Compatibilidade das migrations versionadas: ${{ steps.schema.outcome }}
 
             **Revisao humana obrigatoria antes do merge/deploy:**
-            - As migracoes em `scripts/*.sql` do original NAO sao aplicadas no Supabase automaticamente.
+            - As migracoes originais em `scripts/*.sql` NAO sao executadas diretamente no banco.
+            - Toda nova tabela e RPC deve ter SQL adaptado, revisado e versionado em `supabase/migrations/`.
+            - Enquanto a checagem do contrato falhar, esta PR NAO pode ser publicada.
             - A base real (produtos, fotos, usuarios e pedidos) NAO e copiada pelo GitHub.
             - As versoes locais de `src/main.tsx` e `src/store/admin-auth-store.ts` foram mantidas.
             - Comparar o novo frontend com o banco e as permissoes da instalacao propria;
@@ -106,6 +114,12 @@ jobs:
             .env.example
             .gitignore
             SABORIZA_MODULOS (guia de fases).md
+
+      - name: Bloquear proposta sem SQL compativel
+        if: steps.schema.outcome == 'failure'
+        run: |
+          echo "::error::O projeto original necessita de novas migrations no nosso Supabase. Nao efetuar merge/deploy."
+          exit 1
 
       - name: Sinalizar proposta com build falhando
         if: steps.build.outcome == 'failure'
