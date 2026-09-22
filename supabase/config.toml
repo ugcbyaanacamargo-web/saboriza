@@ -1,0 +1,2 @@
+# Supabase CLI project identity; never commit credentials.
+project_id = "saboriza"
