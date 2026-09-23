@@ -48,5 +48,9 @@ export function orderFromRow(row: OrderRow, itemRows: OrderItemRow[]): Order {
     couponType: (row.coupon_type as CouponDiscountType | "") || "",
     couponValue: row.coupon_value,
     discountAmount: row.discount_amount,
+    separationResponsible: row.separation_responsible,
+    separationFinishedAt: row.separation_finished_at,
+    loadingResponsible: row.loading_responsible,
+    loadingFinishedAt: row.loading_finished_at,
   };
 }

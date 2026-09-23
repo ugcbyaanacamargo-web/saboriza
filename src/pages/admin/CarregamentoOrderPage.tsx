@@ -1,31 +1,31 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { CheckCircle2, ImageOff, ScanLine, Undo2 } from "lucide-react";
 import { AdminState } from "@/components/admin/AdminState";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { BarcodeScannerModal } from "@/components/admin/BarcodeScannerModal";
-import { SeparationItemSheet } from "@/components/admin/SeparationItemSheet";
-import { useSeparationStore } from "@/store/separation-store";
+import { FulfillmentItemSheet } from "@/components/admin/FulfillmentItemSheet";
+import { useFulfillmentStore } from "@/store/fulfillment-store";
 import { useAdminAuthStore } from "@/store/admin-auth-store";
 import { packsLabel } from "@/lib/separation";
-import type { SeparationItem } from "@/types/separation";
+import type { FulfillmentItem } from "@/types/fulfillment";
 
-export function SeparaConfereOrderPage() {
+export function CarregamentoOrderPage() {
   const { orderId } = useParams();
 
-  const order = useSeparationStore((state) => state.currentOrder);
-  const orderStatus = useSeparationStore((state) => state.currentOrderStatus);
-  const fetchOrder = useSeparationStore((state) => state.fetchOrder);
-  const confirmItem = useSeparationStore((state) => state.confirmItem);
-  const undoItem = useSeparationStore((state) => state.undoItem);
-  const requestAdjustment = useSeparationStore((state) => state.requestAdjustment);
-  const resolveAdjustment = useSeparationStore((state) => state.resolveAdjustment);
-  const releaseOrder = useSeparationStore((state) => state.releaseOrder);
+  const order = useFulfillmentStore((state) => state.currentOrder);
+  const orderStatus = useFulfillmentStore((state) => state.currentOrderStatus);
+  const fetchOrder = useFulfillmentStore((state) => state.fetchOrder);
+  const confirmLoadingItem = useFulfillmentStore((state) => state.confirmLoadingItem);
+  const undoLoadingItem = useFulfillmentStore((state) => state.undoLoadingItem);
+  const requestAdjustment = useFulfillmentStore((state) => state.requestAdjustment);
+  const resolveAdjustment = useFulfillmentStore((state) => state.resolveAdjustment);
+  const releaseLoading = useFulfillmentStore((state) => state.releaseLoading);
   const operatorName = useAdminAuthStore((state) => state.session?.user.user_metadata?.name || state.session?.user.email);
 
-  const [selectedItem, setSelectedItem] = useState<SeparationItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<FulfillmentItem | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
 
   useEffect(() => {
@@ -40,11 +40,11 @@ export function SeparaConfereOrderPage() {
     );
   }
 
-  const separationDone = Boolean(order.finishedAt);
-  const isMine = order.status === "CONFIRMED" && order.responsible === operatorName && !separationDone;
+  const loadingDone = Boolean(order.loadingFinishedAt);
+  const isMine = order.loadingResponsible === operatorName && !loadingDone;
   const readOnly = !isMine;
-  const pendingItems = order.items.filter((item) => !item.separatedAt);
-  const separatedItems = order.items.filter((item) => item.separatedAt);
+  const pendingItems = order.items.filter((item) => !item.loadedAt);
+  const loadedItems = order.items.filter((item) => item.loadedAt);
 
   function handleScan(code: string) {
     setScannerOpen(false);
@@ -58,24 +58,17 @@ export function SeparaConfereOrderPage() {
 
   async function handleRelease() {
     if (!order) return;
-    await releaseOrder(order.id);
+    await releaseLoading(order.id);
   }
 
-  const description =
-    order.status === "COMPLETED"
-      ? "Conferência finalizada"
-      : order.status === "CANCELLED"
-        ? "Pedido cancelado"
-        : separationDone
-          ? "Separação concluída — a faturar"
-          : `Faltam ${pendingItems.length} de ${order.items.length} produtos`;
+  const description = loadingDone ? "Carregamento concluído — em entrega" : `Faltam ${pendingItems.length} de ${order.items.length} produtos`;
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title={`Pedido ${order.number}`}
         description={description}
-        back={{ to: "/admin/separa-confere", label: "Voltar" }}
+        back={{ to: "/admin/carrega-entrega", label: "Voltar" }}
         actions={
           isMine ? (
             <>
@@ -83,7 +76,7 @@ export function SeparaConfereOrderPage() {
                 <ScanLine size={16} /> Ler código
               </Button>
               <Button variant="outline" onClick={() => void handleRelease()}>
-                Liberar separação
+                Liberar carregamento
               </Button>
             </>
           ) : undefined
@@ -92,7 +85,7 @@ export function SeparaConfereOrderPage() {
 
       {order.pendingAdjustments.length > 0 && (
         <div className="flex flex-col gap-2 rounded-2xl border border-red-200 bg-red-50 p-4">
-          <p className="text-sm font-bold text-red-700">Ajustes pendentes — separação não termina sozinha até resolver</p>
+          <p className="text-sm font-bold text-red-700">Ajustes pendentes — carregamento não termina sozinho até resolver</p>
           {order.pendingAdjustments.map((adjustment) => (
             <div key={adjustment.id} className="flex items-center justify-between gap-3">
               <p className="text-sm text-red-700/90">{adjustment.message}</p>
@@ -140,11 +133,11 @@ export function SeparaConfereOrderPage() {
         </div>
       )}
 
-      {separatedItems.length > 0 && (
+      {loadedItems.length > 0 && (
         <div className="flex flex-col gap-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-ink-muted">Ver separados</p>
+          <p className="text-xs font-bold uppercase tracking-wide text-ink-muted">Ver carregados</p>
           <div className="flex flex-col gap-2">
-            {separatedItems.map((item) => (
+            {loadedItems.map((item) => (
               <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-forest-950/10 bg-white p-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-forest-950/10 text-forest-950">
                   <CheckCircle2 size={18} />
@@ -155,7 +148,7 @@ export function SeparaConfereOrderPage() {
                 </div>
                 {!readOnly && (
                   <button
-                    onClick={() => void undoItem(order.id, item.id)}
+                    onClick={() => void undoLoadingItem(order.id, item.id)}
                     className="flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-ink-muted hover:bg-ink-900/5"
                   >
                     <Undo2 size={14} /> Desfazer
@@ -167,11 +160,11 @@ export function SeparaConfereOrderPage() {
         </div>
       )}
 
-      <SeparationItemSheet
+      <FulfillmentItemSheet
         item={selectedItem}
         readOnly={readOnly}
         onClose={() => setSelectedItem(null)}
-        onConfirm={(itemId) => confirmItem(order.id, itemId)}
+        onConfirm={(itemId) => confirmLoadingItem(order.id, itemId)}
         onRequestAdjustment={(itemId, message) => requestAdjustment(order.id, itemId, message)}
       />
 
