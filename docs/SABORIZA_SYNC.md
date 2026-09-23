@@ -68,6 +68,34 @@ O GitHub Actions deve continuar sendo a unica rota de deploy `main`.
 O script de sincronizacao preserva `vercel.json` e troca as URLs de
 metadados no `index.html` para o dominio `oris360.vercel.app`.
 
+## Atualizacao de separacao/conferencia, 23/09/2026 (UTC)
+
+A origem `c028508a395f4dc0ec104999fad94c6c5c67802b` introduziu o
+modulo **Separa Confere**, vinculado aos pedidos existentes. A PR #8 foi
+incorporada apos validar e aplicar a migracao aditiva
+`20260923015800_saboriza_separation_domain.sql`.
+
+A estrutura da versao incorporada passou a **17 tabelas, 8 RPCs**:
+- `order_adjustment_requests`: pedidos de ajuste vinculados a pedidos/itens;
+  `pending` e `resolved`, autor, data e resolucao;
+- `orders`: seis colunas de fila, inicio, responsaveis e conclusao;
+- `order_items`: `separated_at` para conferencia por item;
+- RLS administrativo, indices, FK, triggers que impedem a conclusao de
+  separacao iniciada sem todos os itens conferidos ou com ajuste pendente;
+- PostgreSQL Realtime para a fila `orders` (sem acesso anonimo a pedidos).
+
+`supabase/tests/separation_smoke.sql` testa a sequencia
+**confirmar pedido → assumir → conferir item → solicitar ajuste →
+resolver → finalizar → baixar estoque uma unica vez**, inclusive
+bloqueios e permissao nao administrativa. A execucao usa `ROLLBACK`;
+nao cria clientes, itens ou pedidos de exemplo definitivos.
+
+Publicacao do modulo, via GitHub Actions DB-first:
+https://github.com/ugcbyaanacamargo-web/saboriza/actions/runs/35809071426
+
+A Vercel publica no dominio oficial **https://oris360.vercel.app/**.
+Os dados comerciais da base original nao fazem parte desta sincronizacao.
+
 ## Limites
 
 O codigo-fonte e as migrations **nao sao backups dos dados originais**: produtos,
