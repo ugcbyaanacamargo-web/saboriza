@@ -93,6 +93,8 @@ jobs:
           set -euo pipefail
           psql -X -qAt -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" \
             -f supabase/tests/stock_production_smoke.sql
+          psql -X -qAt -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" \
+            -f supabase/tests/separation_smoke.sql
 
       - name: Instalar Vercel CLI
         run: npm install --global vercel
