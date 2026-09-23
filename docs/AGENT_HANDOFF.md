@@ -14,8 +14,8 @@
 - Supabase PROPRIO: https://supabase.com/dashboard/project/eesafxairdoygzifajgw
   (projeto `saborizasu`, ref `eesafxairdoygzifajgw`)
 - Vercel PROPRIA: https://vercel.com/ugcbyaanacamargo-web/saboriza
-- Site: https://saboriza-pied.vercel.app/
-- Admin: https://saboriza-pied.vercel.app/admin/login
+- Site: https://oris360.vercel.app/
+- Admin: https://oris360.vercel.app/admin/login
 
 **Nunca alterar o Supabase/Vercel do desenvolvedor original.**
 A conta nova precisa conectar separadamente GitHub, Supabase e Vercel e receber
