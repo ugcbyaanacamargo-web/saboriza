@@ -59,7 +59,7 @@ begin
                          new.order_item_id is distinct from old.order_item_id);
   end if;
   if verify_reference then
-    select status into parent_status from public.orders where id=new.order_id;
+    select status into parent_status from public.orders where id=new.order_id for update;
     if not found or parent_status<>'CONFIRMED' then
       raise exception 'Ajustes exigem um pedido confirmado';
     end if;
@@ -94,8 +94,8 @@ begin
      and new.separation_queued_at is null then
     new.separation_queued_at:=now();
   end if;
-  if tg_op='UPDATE' and new.status='COMPLETED'
-      and old.status is distinct from new.status then
+  if tg_op='UPDATE' then
+   if new.status='COMPLETED' and old.status is distinct from new.status then
     if exists (
       select 1 from public.order_adjustment_requests
       where order_id=new.id and status='pending'
@@ -112,6 +112,7 @@ begin
       end if;
       new.separation_finished_at:=coalesce(new.separation_finished_at,now());
     end if;
+   end if;
   end if;
   return new;
 end $$;
@@ -126,6 +127,7 @@ begin
      and not exists (
        select 1 from public.orders
        where id=new.order_id and status='CONFIRMED'
+       for update
      ) then
     raise exception 'Separação só pode ser alterada em pedido confirmado';
   end if;
