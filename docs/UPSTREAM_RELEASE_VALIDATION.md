@@ -15,3 +15,24 @@ A migração da versão nova foi feita antes de publicar o frontend:
 Dados do banco do desenvolvedor original NÃO estão neste GitHub. Produtos, fotos, clientes,
 histórico e contas originais não são copiados automaticamente. O banco de destino contém
 apenas os registros que já existiam nele e os novos objetos de esquema.
+
+## Atualizacao Separa Confere (origem `c028508a`)
+
+A origem incluiu a fila de separacao, conferencia por item e solicitacoes de
+ajuste. A instalacao propria aplica a migracao aditiva
+`20260923015800_saboriza_separation_domain.sql` antes de publicar o frontend:
+agora 17 tabelas e 8 RPCs. Ha uma tabela de ajustes, seis colunas de
+separacao em `orders`, `separated_at` em `order_items`, RLS, FK,
+validacoes no banco e Realtime dos pedidos.
+
+`supabase/tests/separation_smoke.sql` foi executado em transacao que
+termina com `ROLLBACK` no banco proprio; testa o bloqueio de
+conclusao com itens/ajustes pendentes, o registro de resolucao,
+a baixa unica de estoque e acesso nao administrativo.
+O release concluiu com sucesso em
+https://github.com/ugcbyaanacamargo-web/saboriza/actions/runs/35809071426
+e a Vercel indicou `READY` para Production no
+commit `da97718147de2d9667f211e036140d6f185c5f10`.
+
+O dominio oficial atual e https://oris360.vercel.app/.
+Nao ha copia de dados comerciais do desenvolvedor.
