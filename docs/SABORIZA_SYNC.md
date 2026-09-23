@@ -66,7 +66,7 @@ O frontend da origem foi incorporado em PR #1 (merge
 `a4bf3eda1b26189a4f866b79bfcf476a647e2338`) e publicado na Vercel.
 O GitHub Actions deve continuar sendo a unica rota de deploy `main`.
 O script de sincronizacao preserva `vercel.json` e troca as URLs de
-metadados no `index.html` para o dominio `saboriza-pied.vercel.app`.
+metadados no `index.html` para o dominio `oris360.vercel.app`.
 
 ## Limites
 
