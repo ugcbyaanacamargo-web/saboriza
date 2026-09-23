@@ -31,8 +31,9 @@ automaticamente acesso ao Supabase Auth, Storage ou banco privado.
    `src/types/supabase.ts`.
 5. Stores/fluxos frontend em `src/store/`, mappers em `src/lib/mappers/`
    e rotas em `src/App.tsx`.
-6. Teste de dominio no banco: `supabase/tests/stock_production_smoke.sql`
-   (executa transacao e `ROLLBACK`; nao altera registros definitivos).
+6. Testes de dominio no banco: `supabase/tests/stock_production_smoke.sql`
+   e `supabase/tests/separation_smoke.sql` (executam transacao e `ROLLBACK`;
+   nao alteram registros definitivos).
 7. GitHub Actions: `.github/workflows/validate-saboriza.yml`,
    `.github/workflows/sync-saboriza-upstream.yml` e
    `.github/workflows/release-saboriza.yml`.
@@ -42,14 +43,14 @@ automaticamente acesso ao Supabase Auth, Storage ou banco privado.
 
 ## 3. Inventario tecnico do banco, baseado no contrato de codigo
 
-O esquema da versao de 21/09/2026 tem **16 tabelas**:
-`categories`, `coupons`, `customers`, `ibge_cities`, `order_items`,
+O esquema da origem incorporada em 22/09/2026 (UTC: 23/09) tem **17 tabelas**:
+`categories`, `coupons`, `customers`, `ibge_cities`, `order_adjustment_requests`, `order_items`,
 `orders`, `product_recipe`, `production_consumptions`,
 `production_records`, `products`, `raw_material_categories`,
 `raw_material_entries`, `raw_materials`, `settings`, `stock_movements`
 e `suppliers`.
 
-**8 RPCs para a API:**
+**8 RPCs para a API** (a separacao usa tabelas e triggers, sem nova RPC):
 `adjust_stock`, `confirm_raw_material_entry`, `create_order`,
 `create_production`, `create_stock_entry`,
 `rename_raw_material_category`, `reverse_raw_material_entry`
@@ -66,6 +67,7 @@ somente a partir desta lista ou dos nomes de arquivos.
 - `20260922011200_saboriza_inventory_schema.sql`
 - `20260922011300_saboriza_inventory_rpc.sql`
 - `20260922012000_saboriza_admin_sequences.sql`
+- `20260923015800_saboriza_separation_domain.sql`
 
 **Auth:** o frontend exige `app_metadata.saboriza_role = "admin"` para
 administracao. RLS deve permanecer habilitada nas tabelas publicas. Nunca
@@ -95,7 +97,8 @@ administradas pelo Supabase Storage.
 - `release-saboriza.yml` usa os GitHub Actions Secrets
   **`SUPABASE_DB_URL`** e **`VERCEL_TOKEN`**. NUNCA mostrar seus valores.
   Aplica migrations via Supabase CLI, valida tabelas, colunas, RPCs e RLS,
-  executa integracao transacional com `ROLLBACK` e publica via Vercel CLI
+  executa integracao de producao/estoque e separacao em transacoes com `ROLLBACK`
+  e publica via Vercel CLI
   somente se tudo passou. Conferir os workflows atuais no GitHub Actions.
 
 Variaveis de build PUBLICAS na Vercel: `VITE_SUPABASE_URL` e
