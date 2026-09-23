@@ -84,7 +84,7 @@ for each row execute function public.saboriza_separation_request_guard();
 -- Preserve the existing legacy admin "complete order" path if separation
 -- was never started, including the existing stock-decrement trigger.
 create function public.saboriza_separation_order_guard() returns trigger
-language plpgsql security invoker set search_path='' as $
+language plpgsql security invoker set search_path='' as $$
 declare newly_queued boolean := (tg_op='INSERT');
 begin
   if tg_op='UPDATE' then
