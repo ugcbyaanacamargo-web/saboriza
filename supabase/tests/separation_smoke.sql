@@ -55,6 +55,7 @@ begin
     item_id,order_id,product_id,'[test] Produto','Caixa','100g',2,5,1,5,10
   );
 
+  update public.orders set status='CONFIRMED' where id=other_order_id;
   update public.orders set status='CONFIRMED' where id=order_id;
   if (select separation_queued_at from public.orders where id=order_id) is null then
     raise exception 'Confirmation did not enqueue the order';
