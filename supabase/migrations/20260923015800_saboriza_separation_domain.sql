@@ -49,13 +49,16 @@ create policy savoriza_adjustment_admin on public.order_adjustment_requests
 create function public.saboriza_separation_request_guard() returns trigger
 language plpgsql security invoker set search_path='' as $$
 declare parent_status public.order_status;
+        verify_reference boolean := (tg_op='INSERT');
 begin
-  if tg_op='UPDATE' and old.status='resolved' and new.status='pending' then
-    raise exception 'Uma solicitação resolvida não pode voltar a pendente';
+  if tg_op='UPDATE' then
+    if old.status='resolved' and new.status='pending' then
+      raise exception 'Uma solicitação resolvida não pode voltar a pendente';
+    end if;
+    verify_reference := (new.order_id is distinct from old.order_id or
+                         new.order_item_id is distinct from old.order_item_id);
   end if;
-  if tg_op='INSERT' or (tg_op='UPDATE' and
-     (new.order_id is distinct from old.order_id or
-      new.order_item_id is distinct from old.order_item_id)) then
+  if verify_reference then
     select status into parent_status from public.orders where id=new.order_id;
     if not found or parent_status<>'CONFIRMED' then
       raise exception 'Ajustes exigem um pedido confirmado';
@@ -81,10 +84,13 @@ for each row execute function public.saboriza_separation_request_guard();
 -- Preserve the existing legacy admin "complete order" path if separation
 -- was never started, including the existing stock-decrement trigger.
 create function public.saboriza_separation_order_guard() returns trigger
-language plpgsql security invoker set search_path='' as $$
+language plpgsql security invoker set search_path='' as $
+declare newly_queued boolean := (tg_op='INSERT');
 begin
-  if new.status='CONFIRMED'
-     and (tg_op='INSERT' or old.status is distinct from new.status)
+  if tg_op='UPDATE' then
+    newly_queued := old.status is distinct from new.status;
+  end if;
+  if new.status='CONFIRMED' and newly_queued
      and new.separation_queued_at is null then
     new.separation_queued_at:=now();
   end if;
