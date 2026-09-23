@@ -3,17 +3,17 @@ import { ImageOff } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
 import { packsLabel } from "@/lib/separation";
-import type { SeparationItem } from "@/types/separation";
+import type { FulfillmentItem } from "@/types/fulfillment";
 
-interface SeparationItemSheetProps {
-  item: SeparationItem | null;
+interface FulfillmentItemSheetProps {
+  item: FulfillmentItem | null;
   readOnly: boolean;
   onClose: () => void;
   onConfirm: (itemId: string) => Promise<void>;
   onRequestAdjustment: (itemId: string, message: string) => Promise<void>;
 }
 
-export function SeparationItemSheet({ item, readOnly, onClose, onConfirm, onRequestAdjustment }: SeparationItemSheetProps) {
+export function FulfillmentItemSheet({ item, readOnly, onClose, onConfirm, onRequestAdjustment }: FulfillmentItemSheetProps) {
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -48,7 +48,7 @@ export function SeparationItemSheet({ item, readOnly, onClose, onConfirm, onRequ
       title={item.productName}
       footer={
         !readOnly &&
-        !item.separatedAt && (
+        !item.loadedAt && (
           <div className="flex flex-col gap-2">
             {adjustmentOpen ? (
               <>
@@ -92,14 +92,14 @@ export function SeparationItemSheet({ item, readOnly, onClose, onConfirm, onRequ
           <p className="text-2xl font-extrabold text-forest-950">{packsLabel(item.packsQuantity, item.packQuantity)}</p>
           <p className="text-xs text-ink-muted">quantidade pedida</p>
         </div>
-        {!item.separatedAt && !readOnly && (
+        {!item.loadedAt && !readOnly && (
           <p className="text-sm font-semibold text-ink-900">
             {item.packsQuantity > 1 ? `Você encontrou os ${item.packsQuantity} packs?` : "Você encontrou a quantidade solicitada?"}
           </p>
         )}
-        {item.separatedAt && (
+        {item.loadedAt && (
           <p className="rounded-xl bg-forest-950/10 px-3 py-2 text-sm font-semibold text-forest-950">
-            Separação confirmada em {new Date(item.separatedAt).toLocaleString("pt-BR")}
+            Carregamento confirmado em {new Date(item.loadedAt).toLocaleString("pt-BR")}
           </p>
         )}
       </div>

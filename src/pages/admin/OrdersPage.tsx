@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Building2, Plus, Search, Tag } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
-import { ORDER_STATUS_OPTIONS, groupOrdersByDay } from "@/lib/order-status";
+import { OPERATIONAL_SUBSTATUS_LABELS, ORDER_STATUS_OPTIONS, groupOrdersByDay, operationalSubstatus } from "@/lib/order-status";
 import { useOrdersStore } from "@/store/orders-store";
 import { AdminState } from "@/components/admin/AdminState";
 import { OrderStatusBadge } from "@/components/admin/OrderStatusBadge";
@@ -19,6 +19,18 @@ function formatOrderDate(iso: string) {
   return isToday ? `Hoje, ${time}` : `${date.toLocaleDateString("pt-BR")}, ${time}`;
 }
 
+function OperationalSubstatusBadge({ order }: { order: Order }) {
+  const substatus = operationalSubstatus(order);
+  if (!substatus) return null;
+  const isActive = substatus === "em_separacao" || substatus === "em_carregamento";
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-ink-700">
+      <span className={cn("h-2 w-2 shrink-0 rounded-full", isActive ? "animate-pulse bg-red-500" : "bg-green-500")} aria-hidden />
+      {OPERATIONAL_SUBSTATUS_LABELS[substatus]}
+    </span>
+  );
+}
+
 function OrderCard({ order }: { order: Order }) {
   return (
     <Link
@@ -27,7 +39,10 @@ function OrderCard({ order }: { order: Order }) {
     >
       <div className="flex items-center justify-between gap-3 bg-ink-900/5 px-4 py-3 sm:px-5">
         <span className="text-base font-extrabold text-forest-950">{order.number}</span>
-        <OrderStatusBadge status={order.status} />
+        <div className="flex flex-col items-end gap-1">
+          <OrderStatusBadge status={order.status} />
+          <OperationalSubstatusBadge order={order} />
+        </div>
       </div>
       <div className="flex flex-col gap-2 px-4 py-4 sm:px-5">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
@@ -78,6 +93,7 @@ export function OrdersPage() {
       IN_REVIEW: 0,
       CONFIRMED: 0,
       COMPLETED: 0,
+      FINALIZADO: 0,
       CANCELLED: 0,
     };
     orders.forEach((order) => {
@@ -91,9 +107,15 @@ export function OrdersPage() {
     ...ORDER_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
   ];
 
-  // "Novo" plural fica estranho ("Novos" já é o rótulo natural pra essa aba)
-  const tabLabel = (tab: (typeof filterTabs)[number]) =>
-    tab.value === "NEW" ? "Novos" : tab.value === "CONFIRMED" ? "Confirmados" : tab.value === "COMPLETED" ? "Finalizados" : tab.label;
+  // Plural fica mais natural que o singular do enum pra rótulo de aba
+  const tabPluralLabels: Partial<Record<OrderStatus, string>> = {
+    NEW: "Novos",
+    IN_REVIEW: "Orçamentos",
+    CONFIRMED: "Pedidos",
+    COMPLETED: "Faturados",
+    FINALIZADO: "Finalizados",
+  };
+  const tabLabel = (tab: (typeof filterTabs)[number]) => tabPluralLabels[tab.value as OrderStatus] ?? tab.label;
 
   return (
     <div className="flex flex-col gap-6">

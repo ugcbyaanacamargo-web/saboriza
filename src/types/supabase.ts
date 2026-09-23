@@ -207,6 +207,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          loaded_at: string | null
           order_id: string
           pack_quantity: number
           packs_quantity: number
@@ -222,6 +223,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          loaded_at?: string | null
           order_id: string
           pack_quantity: number
           packs_quantity: number
@@ -237,6 +239,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          loaded_at?: string | null
           order_id?: string
           pack_quantity?: number
           packs_quantity?: number
@@ -284,8 +287,18 @@ export type Database = {
           customer_neighborhood: string
           customer_state: string
           customer_trade_name: string
+          delivery_confirmed_at: string | null
+          delivery_confirmed_by: string | null
+          delivery_signature_url: string | null
+          delivery_result: string | null
           discount_amount: number
           id: string
+          loading_completed_by: string | null
+          loading_finished_at: string | null
+          loading_queued_at: string | null
+          loading_responsible: string | null
+          loading_started_at: string | null
+          loading_started_by: string | null
           order_number: string
           payment_terms: string
           phone: string
@@ -318,8 +331,18 @@ export type Database = {
           customer_neighborhood?: string
           customer_state?: string
           customer_trade_name?: string
+          delivery_confirmed_at?: string | null
+          delivery_confirmed_by?: string | null
+          delivery_signature_url?: string | null
+          delivery_result?: string | null
           discount_amount?: number
           id?: string
+          loading_completed_by?: string | null
+          loading_finished_at?: string | null
+          loading_queued_at?: string | null
+          loading_responsible?: string | null
+          loading_started_at?: string | null
+          loading_started_by?: string | null
           order_number?: string
           payment_terms?: string
           phone: string
@@ -352,8 +375,18 @@ export type Database = {
           customer_neighborhood?: string
           customer_state?: string
           customer_trade_name?: string
+          delivery_confirmed_at?: string | null
+          delivery_confirmed_by?: string | null
+          delivery_signature_url?: string | null
+          delivery_result?: string | null
           discount_amount?: number
           id?: string
+          loading_completed_by?: string | null
+          loading_finished_at?: string | null
+          loading_queued_at?: string | null
+          loading_responsible?: string | null
+          loading_started_at?: string | null
+          loading_started_by?: string | null
           order_number?: string
           payment_terms?: string
           phone?: string
@@ -1020,6 +1053,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      finalize_delivery: {
+        Args: {
+          p_doc: string
+          p_doc_type: string
+          p_er_code: string
+          p_items: Json
+          p_notes: string
+          p_order_id: string
+          p_pdf_path: string
+          p_receiver_name: string
+          p_result: string
+          p_role: string
+          p_signature_path: string
+        }
+        Returns: string
+      }
+      reserve_delivery_er: {
+        Args: { p_order_id: string }
+        Returns: { er_code: string; reserved_at: string }[]
+      }
       adjust_stock: {
         Args: {
           p_counted_stock: number
@@ -1196,6 +1249,7 @@ export type Database = {
         | "CONFIRMED"
         | "COMPLETED"
         | "CANCELLED"
+        | "FINALIZADO"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1323,7 +1377,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      order_status: ["NEW", "IN_REVIEW", "CONFIRMED", "COMPLETED", "CANCELLED"],
+      order_status: ["NEW", "IN_REVIEW", "CONFIRMED", "COMPLETED", "CANCELLED", "FINALIZADO"],
     },
   },
 } as const
