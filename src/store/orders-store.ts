@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import { resolveCurrentCompanyId } from "@/lib/current-company";
 import { orderFromRow } from "@/lib/mappers/order-mapper";
 import { useCatalogStore } from "@/store/catalog-store";
 import type { Order, OrderCustomer, OrderStatus } from "@/types/order";
@@ -13,6 +14,7 @@ interface OrdersState {
   updateStatus: (orderId: string, status: OrderStatus) => void;
   updateOrderDetails: (orderId: string, customer: OrderCustomer, paymentTerms: string) => void;
   linkCustomer: (orderId: string, customerId: string) => Promise<boolean>;
+  setSeller: (orderId: string, employeeId: string | null) => Promise<boolean>;
   deleteOrder: (orderId: string) => Promise<boolean>;
   replaceOrder: (order: Order) => void;
 }
@@ -23,9 +25,14 @@ export const useOrdersStore = create<OrdersState>()((set, get) => ({
 
   fetchOrders: async () => {
     set({ status: "loading" });
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) {
+      set({ status: "error" });
+      return;
+    }
     const [{ data: orderRows, error: orderError }, { data: itemRows, error: itemError }] = await Promise.all([
-      supabase.from("orders").select("*").order("created_at", { ascending: false }),
-      supabase.from("order_items").select("*"),
+      supabase.from("orders").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
+      supabase.from("order_items").select("*").eq("company_id", companyId),
     ]);
 
     if (orderError || itemError) {
@@ -123,6 +130,20 @@ export const useOrdersStore = create<OrdersState>()((set, get) => ({
     }
 
     set({ orders: previous.map((order) => (order.id === orderId ? { ...order, customerId } : order)) });
+    return true;
+  },
+
+  setSeller: async (orderId, employeeId) => {
+    const previous = get().orders;
+    const { error } = await supabase.from("orders").update({ seller_employee_id: employeeId }).eq("id", orderId);
+
+    if (error) {
+      toast.error("Não foi possível definir o vendedor do pedido");
+      return false;
+    }
+
+    set({ orders: previous.map((order) => (order.id === orderId ? { ...order, sellerEmployeeId: employeeId } : order)) });
+    toast.success("Vendedor do pedido atualizado");
     return true;
   },
 

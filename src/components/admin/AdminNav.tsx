@@ -1,23 +1,33 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
+  Activity,
+  AlertTriangle,
   Archive,
   BarChart3,
   Boxes,
+  Gauge,
   Building2,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   Database,
   Factory,
   LayoutDashboard,
+  ListChecks,
   Minus,
   Package,
+  PackageCheck,
   PackageSearch,
   Plus,
+  ReceiptText,
+  Wallet,
   Settings,
   TrendingUp,
   Truck,
+  UserCheck,
   Users,
+  UsersRound,
   Warehouse,
   type LucideIcon,
 } from "lucide-react";
@@ -27,7 +37,7 @@ import { slugify } from "@/lib/slugify";
 import { useCatalogStore } from "@/store/catalog-store";
 import { useOrdersStore } from "@/store/orders-store";
 
-export type NavBadgeKey = "newOrders" | "criticalStock" | "pendingSeparation";
+export type NavBadgeKey = "newOrders" | "criticalStock" | "pendingSeparation" | "pendingFulfillment";
 
 export interface NavItem {
   to: string;
@@ -38,6 +48,7 @@ export interface NavItem {
   alsoActiveFor?: string[];
   badge?: NavBadgeKey;
   highlight?: boolean;
+  external?: boolean;
 }
 
 export interface NavGroup {
@@ -52,6 +63,8 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: LayoutDashboard,
     items: [
       { to: "/admin", label: "Indicadores", icon: TrendingUp, end: true },
+      { to: "/admin/pulso", label: "Pulso", icon: Activity },
+      { to: "/admin/painel-proprietario", label: "Painel do Proprietário", icon: Gauge },
       { to: "/admin/pedidos", label: "Pedidos", icon: ClipboardList, badge: "newOrders" },
     ],
   },
@@ -62,6 +75,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/admin/produtos", label: "Produtos", icon: Package, alsoActiveFor: ["/admin/categorias"] },
       { to: "/admin/clientes", label: "Clientes", icon: Users },
       { to: "/admin/fornecedores", label: "Fornecedores", icon: Truck },
+      { to: "/admin/colaboradores", label: "Colaboradores", icon: UserCheck },
     ],
   },
   {
@@ -70,6 +84,10 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/admin/materias-primas", label: "Matérias-primas", icon: Boxes },
       { to: "/admin/produzir", label: "Produziu, Registra", icon: ClipboardCheck, highlight: true },
+      { to: "/admin/chao-de-fabrica", label: "Chão de Fábrica", icon: Factory },
+      { to: "/admin/rotas-producao", label: "Rotas de Produção", icon: ClipboardList },
+      { to: "/admin/planos-producao", label: "Planos de Produção", icon: ClipboardList },
+      { to: "/admin/central-producao", label: "Central de Gestão", icon: Gauge },
       { to: "/admin/producao", label: "Painel de produção", icon: Factory },
     ],
   },
@@ -81,13 +99,40 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/admin/estoque/indicadores", label: "Indicadores de estoque", icon: BarChart3 },
     ],
   },
+  {
+    label: "Financeiro",
+    icon: Wallet,
+    items: [
+      { to: "/admin/financeiro-geral", label: "Financeiro Geral", icon: Wallet },
+      { to: "/admin/aportes", label: "Aportes de Sócios", icon: Wallet },
+      { to: "/admin/despesas", label: "Despesas", icon: ReceiptText },
+      { to: "/admin/receitas", label: "Receitas", icon: TrendingUp },
+      { to: "/admin/patrimonio", label: "Patrimônio", icon: Boxes },
+      { to: "/admin/dre", label: "DRE Gerencial", icon: BarChart3 },
+      { to: "/admin/fechamento", label: "Fechamento Mensal", icon: ClipboardCheck },
+      { to: "/admin/integracoes", label: "Integrações", icon: Wallet },
+    ],
+  },
+  {
+    label: "Vendas e equipe",
+    icon: TrendingUp,
+    items: [
+      { to: "/admin/vendas", label: "Força de Vendas", icon: TrendingUp },
+      { to: "/admin/tarefas", label: "Tarefas e Missões", icon: ListChecks },
+    ],
+  },
 ];
 
 export const STANDALONE_NAV_ITEMS: NavItem[] = [
   { to: "/admin/separa-confere", label: "Separa Confere", icon: PackageSearch, badge: "pendingSeparation" },
+  { to: "/admin/carrega-entrega", label: "Carrega Entrega", icon: PackageCheck, badge: "pendingFulfillment" },
+  { to: "/admin/ponto-oris", label: "Terminal de Ponto", icon: Clock },
+  { to: "/admin/meu360", label: "Meu 360", icon: Gauge },
 ];
 
 export const SETTINGS_ITEM: NavItem = { to: "/admin/configuracoes", label: "Configurações", icon: Settings };
+export const TEAM_ITEM: NavItem = { to: "/admin/usuarios", label: "Usuários", icon: UsersRound };
+export const ERRORS_ITEM: NavItem = { to: "/admin/erros-sistema", label: "Erros do Sistema", icon: AlertTriangle };
 
 export function isNavItemActive(pathname: string, item: NavItem): boolean {
   if (item.excludePrefixes?.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) return false;
@@ -96,15 +141,29 @@ export function isNavItemActive(pathname: string, item: NavItem): boolean {
   return pathname === item.to || pathname.startsWith(`${item.to}/`);
 }
 
+const BADGE_DESCRIPTIONS: Record<NavBadgeKey, string> = {
+  newOrders: "pedidos novos",
+  criticalStock: "itens críticos",
+  pendingSeparation: "pedidos aguardando separação",
+  pendingFulfillment: "pedidos aguardando carregamento ou entrega",
+};
+
+function badgeDescription(key?: NavBadgeKey): string {
+  return key ? BADGE_DESCRIPTIONS[key] : "";
+}
+
 function activeGroupFor(pathname: string): NavGroup | undefined {
   return NAV_GROUPS.find((group) => group.items.some((item) => isNavItemActive(pathname, item)));
 }
 
 export function useNavBadges(): Record<NavBadgeKey, number> {
   const newOrders = useOrdersStore((state) => state.orders.filter((order) => order.status === "NEW").length);
-  const pendingSeparation = useOrdersStore((state) => state.orders.filter((order) => order.status === "CONFIRMED").length);
+  const pendingSeparation = useOrdersStore(
+    (state) => state.orders.filter((order) => order.status === "CONFIRMED" && !order.separationFinishedAt).length
+  );
+  const pendingFulfillment = useOrdersStore((state) => state.orders.filter((order) => order.status === "COMPLETED").length);
   const criticalStock = useCatalogStore((state) => state.products.filter((product) => product.active && healthLevel(product) === "red").length);
-  return { newOrders, criticalStock, pendingSeparation };
+  return { newOrders, criticalStock, pendingSeparation, pendingFulfillment };
 }
 
 type NavVariant = "sidebar" | "sheet";
@@ -119,7 +178,12 @@ const variantClasses: Record<
     idle: "hover:bg-cream-50/5 hover:text-cream-50",
     group: "text-cream-50 before:bg-gold-500/70",
     groupHover: "hover:bg-cream-50/5",
-    badge: { newOrders: "bg-gold-500 text-forest-950", criticalStock: "bg-red-500 text-white", pendingSeparation: "bg-blue-500 text-white" },
+    badge: {
+      newOrders: "bg-gold-500 text-forest-950",
+      criticalStock: "bg-red-500 text-white",
+      pendingSeparation: "bg-blue-500 text-white",
+      pendingFulfillment: "bg-blue-500 text-white",
+    },
     dot: "bg-gold-500",
     divider: "border-cream-50/10",
   },
@@ -129,7 +193,12 @@ const variantClasses: Record<
     idle: "hover:bg-ink-900/5",
     group: "text-ink-900 before:bg-gold-600/70",
     groupHover: "hover:bg-ink-900/5",
-    badge: { newOrders: "bg-gold-500 text-forest-950", criticalStock: "bg-red-600 text-white", pendingSeparation: "bg-blue-600 text-white" },
+    badge: {
+      newOrders: "bg-gold-500 text-forest-950",
+      criticalStock: "bg-red-600 text-white",
+      pendingSeparation: "bg-blue-600 text-white",
+      pendingFulfillment: "bg-blue-600 text-white",
+    },
     dot: "bg-gold-600",
     divider: "border-ink-900/10",
   },
@@ -200,18 +269,13 @@ export function AdminNav({ variant, onNavigate }: AdminNavProps) {
     const active = isNavItemActive(pathname, item);
     const Icon = item.icon;
     const badgeCount = item.badge ? badges[item.badge] : 0;
-    return (
-      <Link
-        key={item.to}
-        to={item.to}
-        onClick={onNavigate}
-        aria-current={active ? "page" : undefined}
-        className={cn(
-          "relative flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors before:absolute before:left-0 before:top-2.5 before:bottom-2.5 before:w-[3px] before:rounded-full",
-          styles.item,
-          active ? styles.active : styles.idle
-        )}
-      >
+    const itemClassName = cn(
+      "relative flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors before:absolute before:left-0 before:top-2.5 before:bottom-2.5 before:w-[3px] before:rounded-full",
+      styles.item,
+      active ? styles.active : styles.idle
+    );
+    const content = (
+      <>
         <span
           className={cn(
             "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
@@ -222,13 +286,26 @@ export function AdminNav({ variant, onNavigate }: AdminNavProps) {
         </span>
         <span className="flex-1 truncate">{item.label}</span>
         {badgeCount > 0 && (
-          <span
-            aria-label={`${badgeCount} ${item.badge === "newOrders" ? "pedidos novos" : "itens críticos"}`}
+          <span aria-label={`${badgeCount} ${badgeDescription(item.badge)}`}
             className={cn("min-w-5 rounded-full px-1.5 py-0.5 text-center text-[11px] font-bold leading-none", item.badge && styles.badge[item.badge])}
           >
             {badgeCount > 99 ? "99+" : badgeCount}
           </span>
         )}
+      </>
+    );
+
+    if (item.external) {
+      return (
+        <a key={item.to} href={item.to} target="_blank" rel="noreferrer" className={itemClassName}>
+          {content}
+        </a>
+      );
+    }
+
+    return (
+      <Link key={item.to} to={item.to} onClick={onNavigate} aria-current={active ? "page" : undefined} className={itemClassName}>
+        {content}
       </Link>
     );
   }
@@ -249,7 +326,7 @@ export function AdminNav({ variant, onNavigate }: AdminNavProps) {
               aria-expanded={isOpen}
               aria-controls={panelId}
               className={cn(
-                "relative flex min-h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition-colors before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-full",
+                "relative flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition-colors before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[3px] before:rounded-full",
                 styles.group,
                 styles.groupHover
               )}
@@ -274,6 +351,8 @@ export function AdminNav({ variant, onNavigate }: AdminNavProps) {
       })}
       <div className={cn("mt-1 flex flex-col gap-1 border-t pt-2", styles.divider)}>
         {STANDALONE_NAV_ITEMS.map(renderItem)}
+        {renderItem(TEAM_ITEM)}
+        {renderItem(ERRORS_ITEM)}
         {renderItem(SETTINGS_ITEM)}
       </div>
     </nav>
