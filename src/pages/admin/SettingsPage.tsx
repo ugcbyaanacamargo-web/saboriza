@@ -7,6 +7,7 @@ import { Combobox, type ComboboxOption } from "@/components/ui/Combobox";
 import { AdminState } from "@/components/admin/AdminState";
 import { ImageUploader } from "@/components/admin/ImageUploader";
 import { CouponsSection } from "@/components/admin/CouponsSection";
+import { RolesPermissionsPanel } from "@/components/admin/RolesPermissionsPanel";
 import { TopBar } from "@/components/layout/TopBar";
 import { Hero } from "@/components/catalog/Hero";
 import { cn } from "@/lib/cn";
@@ -20,12 +21,13 @@ import { searchCnae } from "@/lib/cnae";
 import { TAX_REGIMES, SCHEDULE_ANNEXES } from "@/lib/fiscal-constants";
 import { getSettingsReadiness } from "@/lib/settings-readiness";
 
-type SettingsTab = "fabrica" | "aparencia" | "cupons";
+type SettingsTab = "fabrica" | "aparencia" | "cupons" | "usuarios";
 
 const TABS: { value: SettingsTab; label: string }[] = [
   { value: "fabrica", label: "Dados da fábrica" },
   { value: "aparencia", label: "Aparência" },
   { value: "cupons", label: "Cupons" },
+  { value: "usuarios", label: "Usuários e Permissões" },
 ];
 
 export function SettingsPage() {
@@ -390,14 +392,27 @@ export function SettingsPage() {
             <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
               <div className="flex flex-col gap-6">
                 <div className="rounded-3xl border border-forest-950/10 bg-white p-6">
-                  <p className="mb-1 text-lg font-extrabold text-forest-950">Aparência</p>
+                  <p className="mb-1 text-lg font-extrabold text-forest-950">Logo</p>
                   <p className="mb-4 text-sm text-ink-muted">
-                    Imagem da Hero (logomarca/mascote) exibida no topo do catálogo público.
+                    Logo exibida no topo do site, no rodapé e no painel admin.
+                  </p>
+                  <ImageUploader pathPrefix="logo/" onUploaded={(url) => handleChange("logoUrl", url)} />
+                  {!form.logoUrl && (
+                    <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-ink-muted">
+                      <ImageOff size={14} /> Nenhuma logo cadastrada — exibindo um monograma com a inicial da empresa
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-3xl border border-forest-950/10 bg-white p-6">
+                  <p className="mb-1 text-lg font-extrabold text-forest-950">Imagem da Hero</p>
+                  <p className="mb-4 text-sm text-ink-muted">
+                    Imagem (logomarca/mascote) exibida no topo do catálogo público.
                   </p>
                   <ImageUploader pathPrefix="hero/" onUploaded={(url) => handleChange("heroImageUrl", url)} />
                   {!form.heroImageUrl && (
                     <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-ink-muted">
-                      <ImageOff size={14} /> Nenhuma imagem cadastrada — usando a imagem padrão
+                      <ImageOff size={14} /> Nenhuma imagem cadastrada — usando a logo (ou o monograma) no lugar
                     </p>
                   )}
                 </div>
@@ -434,6 +449,7 @@ export function SettingsPage() {
           )}
 
           {tab === "cupons" && <CouponsSection />}
+          {tab === "usuarios" && <RolesPermissionsPanel />}
         </>
       )}
     </div>
