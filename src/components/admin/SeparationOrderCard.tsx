@@ -27,11 +27,7 @@ export function SeparationOrderCard({ order }: SeparationOrderCardProps) {
   async function handleAccept() {
     if (accepting) return;
     setAccepting(true);
-    const ok = await acceptOrder(order.id);
-    if (ok) {
-      navigate(`/admin/separa-confere/${order.id}`);
-      return;
-    }
+    await acceptOrder(order.id);
     setAccepting(false);
   }
 
@@ -77,7 +73,7 @@ export function SeparationOrderCard({ order }: SeparationOrderCardProps) {
         {cardBody}
         <div className="px-4 pb-4 sm:px-5">
           <span className="inline-flex min-h-11 w-full items-center justify-center rounded-2xl bg-blue-600 px-4 text-sm font-bold text-white">
-            CONTINUAR
+            Separar
           </span>
         </div>
       </button>

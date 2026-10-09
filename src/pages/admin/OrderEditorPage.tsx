@@ -9,6 +9,7 @@ import {
   Eye,
   MessageCircle,
   Plus,
+  Receipt,
   Search,
   Trash2,
   UserCheck,
@@ -28,9 +29,11 @@ import { useCatalogStore } from "@/store/catalog-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useCustomersStore } from "@/store/customers-store";
 import { useSettingsStore } from "@/store/settings-store";
+import { useVendasStore } from "@/store/vendas-store";
 import { submitOrder, updateOrderItems } from "@/lib/orders-api";
+import { resolveCurrentCompanyId } from "@/lib/current-company";
 import { copyOrderText, downloadOrderPdf, sendOrderWhatsApp } from "@/lib/order-actions";
-import { ORDER_STATUS_OPTIONS, ORDER_STATUS_TRANSITIONS } from "@/lib/order-status";
+import { ORDER_STATUS_OPTIONS, ORDER_STATUS_TRANSITIONS, operationalSubstatus } from "@/lib/order-status";
 import { getCustomerDisplayName, getCustomerSecondaryLine } from "@/lib/customer-display";
 import { calculateCartTotal, calculateItemCount, calculateLineTotal } from "@/lib/pricing";
 import { formatCurrency } from "@/lib/currency";
@@ -71,7 +74,11 @@ export function OrderEditorPage() {
   const updateStatus = useOrdersStore((state) => state.updateStatus);
   const updateOrderDetails = useOrdersStore((state) => state.updateOrderDetails);
   const linkCustomer = useOrdersStore((state) => state.linkCustomer);
+  const setSeller = useOrdersStore((state) => state.setSeller);
   const deleteOrder = useOrdersStore((state) => state.deleteOrder);
+
+  const sellers = useVendasStore((state) => state.sellers);
+  const fetchSellers = useVendasStore((state) => state.fetchSellers);
 
   const registeredCustomers = useCustomersStore((state) => state.customers);
   const fetchCustomers = useCustomersStore((state) => state.fetchCustomers);
@@ -101,6 +108,7 @@ export function OrderEditorPage() {
 
   useEffect(() => {
     if (registeredCustomers.length === 0) fetchCustomers();
+    if (sellers.length === 0) fetchSellers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -183,7 +191,9 @@ export function OrderEditorPage() {
 
     setSubmitting(true);
     try {
-      const created = await submitOrder(customerToOrderCustomer(selectedCustomer), items, coupon?.code, selectedCustomer.id);
+      const companyId = await resolveCurrentCompanyId();
+      if (!companyId) throw new Error("Empresa não identificada");
+      const created = await submitOrder(companyId, customerToOrderCustomer(selectedCustomer), items, coupon?.code, selectedCustomer.id);
       createOrder(created);
       toast.success(`Pedido ${created.number} criado`);
       navigate("/admin/pedidos");
@@ -277,7 +287,9 @@ export function OrderEditorPage() {
     if (!order) return;
     setDuplicating(true);
     try {
-      const duplicated = await submitOrder(order.customer, order.items, order.couponCode || undefined, order.customerId ?? undefined);
+      const companyId = await resolveCurrentCompanyId();
+      if (!companyId) throw new Error("Empresa não identificada");
+      const duplicated = await submitOrder(companyId, order.customer, order.items, order.couponCode || undefined, order.customerId ?? undefined);
       createOrder(duplicated);
       toast.success(`Pedido ${duplicated.number} criado a partir do ${order.number}`);
       navigate(`/admin/pedidos/${duplicated.id}`);
@@ -341,6 +353,35 @@ export function OrderEditorPage() {
 
       {order && (
         <div className="flex flex-wrap gap-2 rounded-3xl border border-forest-950/10 bg-white p-4">
+          {(() => {
+            const canFaturar = operationalSubstatus(order) === "a_faturar";
+            const faturarDisabledReason = canFaturar
+              ? undefined
+              : order.status === "CANCELLED"
+                ? "Pedido cancelado"
+                : order.status === "NEW" || order.status === "IN_REVIEW"
+                  ? "Confirme o pedido antes de faturar"
+                  : order.status === "COMPLETED" || order.status === "FINALIZADO"
+                    ? "Pedido já faturado"
+                    : "Finalize a separação pra liberar o faturamento";
+            return (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canFaturar}
+                title={faturarDisabledReason}
+                className={
+                  canFaturar
+                    ? "border-[#128C4A] text-[#128C4A] hover:bg-[#128C4A]/10"
+                    : "cursor-not-allowed text-ink-muted"
+                }
+                onClick={() => canFaturar && navigate(`/admin/faturar/${order.id}`)}
+              >
+                <Receipt size={16} /> Faturar
+              </Button>
+            );
+          })()}
           <Button type="button" size="sm" variant="outline" onClick={() => setPreviewOpen(true)}>
             <Eye size={16} /> Visualizar pedido
           </Button>
@@ -356,10 +397,15 @@ export function OrderEditorPage() {
           >
             <Download size={16} /> Baixar PDF
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => sendOrderWhatsApp(order, order.customer.phone)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => settings && sendOrderWhatsApp(order, order.customer.phone, settings)}
+          >
             <MessageCircle size={16} /> Enviar por WhatsApp
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => copyOrderText(order)}>
+          <Button type="button" size="sm" variant="outline" onClick={() => settings && copyOrderText(order, settings)}>
             <Copy size={16} /> Copiar comanda
           </Button>
           <Button
@@ -403,6 +449,27 @@ export function OrderEditorPage() {
           />
         </div>
       </section>
+
+      {order && (
+        <section className="flex flex-col gap-3 rounded-3xl border border-forest-950/10 bg-white p-6">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-wide text-ink-muted">Vendedor</p>
+            <Link to="/admin/vendas" className="text-xs font-semibold text-forest-800 hover:underline">
+              Ver comissões
+            </Link>
+          </div>
+          <select
+            value={order.sellerEmployeeId ?? ""}
+            onChange={(e) => void setSeller(order.id, e.target.value || null)}
+            className="h-11 w-full max-w-sm rounded-xl border border-ink-900/15 bg-white px-3 text-sm text-ink-900 outline-none focus:border-forest-700 sm:w-auto"
+          >
+            <option value="">Sem vendedor</option>
+            {sellers.map((seller) => (
+              <option key={seller.id} value={seller.id}>{seller.name}</option>
+            ))}
+          </select>
+        </section>
+      )}
 
       <section className="flex flex-col gap-4 rounded-3xl border border-forest-950/10 bg-white p-6">
         <p className="text-xs font-bold uppercase tracking-wide text-ink-muted">Produtos</p>

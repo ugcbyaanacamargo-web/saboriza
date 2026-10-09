@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ClipboardCheck, ClipboardList, ExternalLink, LayoutGrid, LogOut, Menu, Warehouse } from "lucide-react";
+import { Building2, ClipboardCheck, ClipboardList, ExternalLink, LayoutGrid, LogOut, Menu, ShieldCheck, Warehouse } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAdminAuthStore } from "@/store/admin-auth-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useSettingsStore } from "@/store/settings-store";
+import { usePlatformStore } from "@/store/platform-store";
+import { useAdminCompanyStore } from "@/store/admin-company-store";
 import { Sheet } from "@/components/ui/Sheet";
 import { AdminNav, isNavItemActive, useNavBadges, type NavItem } from "@/components/admin/AdminNav";
 
@@ -40,18 +42,30 @@ export function AdminLayout() {
   const logout = useAdminAuthStore((state) => state.logout);
   const email = useAdminAuthStore((state) => state.session?.user.email ?? "");
   const fetchSettings = useSettingsStore((state) => state.fetchSettings);
+  const company = useAdminCompanyStore((state) => state.company);
+  const myCompanies = useAdminCompanyStore((state) => state.companies);
+  const fetchCompany = useAdminCompanyStore((state) => state.fetch);
+  const switchCompany = useAdminCompanyStore((state) => state.switchCompany);
+  const companyName = company?.display_name || "Empresa";
   const ordersStatus = useOrdersStore((state) => state.status);
   const fetchOrders = useOrdersStore((state) => state.fetchOrders);
   const badges = useNavBadges();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isPlatformAdmin = usePlatformStore((state) => state.isPlatformAdmin);
+  const checkPlatformAccess = usePlatformStore((state) => state.checkAccess);
 
   const showTabBar = pathname !== FLOOR_ROUTE;
 
   useEffect(() => {
     fetchSettings();
-  }, [fetchSettings]);
+    void fetchCompany();
+  }, [fetchSettings, fetchCompany]);
+
+  useEffect(() => {
+    void checkPlatformAccess();
+  }, [checkPlatformAccess]);
 
   useEffect(() => {
     if (ordersStatus === "idle") fetchOrders();
@@ -80,8 +94,23 @@ export function AdminLayout() {
       <aside className="hidden w-64 shrink-0 flex-col border-r border-black/10 bg-forest-950 text-cream-50 lg:flex">
         <div className="px-6 pb-4 pt-6">
           <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold-400">Admin</span>
-          <p className="text-xl font-extrabold">Saboriza</p>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-cream-100/50">Fábrica de temperos</p>
+          <p className="text-xl font-extrabold">{companyName}</p>
+          {myCompanies.length > 1 && (
+            <label className="mt-2 flex items-center gap-1.5 rounded-lg border border-cream-50/15 bg-cream-50/5 px-2 py-1.5 text-xs">
+              <Building2 size={13} className="shrink-0 text-cream-100/50" />
+              <select
+                value={company?.id ?? ""}
+                onChange={(e) => switchCompany(e.target.value)}
+                className="w-full truncate bg-transparent text-cream-100/85 outline-none [&>option]:bg-forest-900"
+              >
+                {myCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.display_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-2">
@@ -90,7 +119,18 @@ export function AdminLayout() {
 
         <div className="flex flex-col gap-1 border-t border-cream-50/10 px-3 py-3">
           {email && <UserBadge email={email} tone="dark" />}
-          <a href="/" target="_blank" rel="noreferrer" className={cn(footerLinkClasses, "text-cream-100/85 hover:bg-cream-50/5 hover:text-cream-50")}>
+          {isPlatformAdmin && (
+            <Link to="/platform" className={cn(footerLinkClasses, "text-gold-400 hover:bg-cream-50/5 hover:text-gold-300")}>
+              <ShieldCheck size={18} />
+              Painel da plataforma
+            </Link>
+          )}
+          <a
+            href={company?.slug ? `/${company.slug}` : "/"}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(footerLinkClasses, "text-cream-100/85 hover:bg-cream-50/5 hover:text-cream-50")}
+          >
             <ExternalLink size={18} />
             Voltar ao site
           </a>
@@ -105,7 +145,7 @@ export function AdminLayout() {
         <header className="flex shrink-0 items-center justify-between border-b border-black/10 bg-forest-950 px-4 py-3 text-cream-50 lg:hidden">
           <div>
             <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gold-400">Admin</span>
-            <p className="text-lg font-extrabold leading-none">Saboriza</p>
+            <p className="text-lg font-extrabold leading-none">{companyName}</p>
           </div>
           <button
             onClick={() => setMobileMenuOpen(true)}
@@ -178,9 +218,40 @@ export function AdminLayout() {
       <Sheet open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} title="Menu">
         <div className="flex flex-col gap-5">
           {email && <UserBadge email={email} tone="light" />}
+          {myCompanies.length > 1 && (
+            <label className="flex items-center gap-1.5 rounded-lg border border-ink-900/15 px-2 py-1.5 text-xs">
+              <Building2 size={13} className="shrink-0 text-ink-muted" />
+              <select
+                value={company?.id ?? ""}
+                onChange={(e) => switchCompany(e.target.value)}
+                className="w-full truncate bg-transparent text-ink-900 outline-none"
+              >
+                {myCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.display_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <AdminNav variant="sheet" onNavigate={() => setMobileMenuOpen(false)} />
           <div className="flex flex-col gap-1 border-t border-ink-900/10 pt-3">
-            <a href="/" target="_blank" rel="noreferrer" className={cn(footerLinkClasses, "text-ink-900 hover:bg-ink-900/5")}>
+            {isPlatformAdmin && (
+              <Link
+                to="/platform"
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn(footerLinkClasses, "text-forest-800 hover:bg-ink-900/5")}
+              >
+                <ShieldCheck size={18} />
+                Painel da plataforma
+              </Link>
+            )}
+            <a
+              href={company?.slug ? `/${company.slug}` : "/"}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(footerLinkClasses, "text-ink-900 hover:bg-ink-900/5")}
+            >
               <ExternalLink size={18} />
               Voltar ao site
             </a>

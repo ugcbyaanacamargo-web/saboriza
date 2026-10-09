@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, CheckCircle2, Clock, Inbox, Minus } from "lucide-re
 import { useCatalogStore } from "@/store/catalog-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useCustomersStore } from "@/store/customers-store";
+import { useAdminCompanyStore } from "@/store/admin-company-store";
 import { formatCurrency } from "@/lib/currency";
 import { buildDailyRevenue } from "@/lib/daily-revenue";
 import { cn } from "@/lib/cn";
@@ -73,6 +74,7 @@ export function IndicatorsPage() {
   const customers = useCustomersStore((state) => state.customers);
   const customersStatus = useCustomersStore((state) => state.status);
   const fetchCustomers = useCustomersStore((state) => state.fetchCustomers);
+  const companyName = useAdminCompanyStore((state) => state.company?.display_name) || "Empresa";
 
   useEffect(() => {
     fetchOrders();
@@ -108,8 +110,8 @@ export function IndicatorsPage() {
 
   const cards = [
     { label: "Novos pedidos", value: newOrders, icon: Inbox },
-    { label: "Em análise", value: inReviewOrders, icon: Clock },
-    { label: "Confirmados", value: confirmedOrders, icon: CheckCircle2 },
+    { label: "Orçamentos", value: inReviewOrders, icon: Clock },
+    { label: "Pedidos confirmados", value: confirmedOrders, icon: CheckCircle2 },
   ];
 
   const recentOrders = [...orders]
@@ -139,7 +141,7 @@ export function IndicatorsPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-extrabold text-forest-950">Indicadores</h1>
-        <p className="text-sm text-ink-muted">Visão geral e comparativo da operação da Saboriza.</p>
+        <p className="text-sm text-ink-muted">Visão geral e comparativo da operação da {companyName}.</p>
       </div>
 
       {isLoading ? (
