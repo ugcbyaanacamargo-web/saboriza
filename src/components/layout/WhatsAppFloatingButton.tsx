@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { MessageCircle, ShoppingBag } from "lucide-react";
-import { CONTACT } from "@/config/contact";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
 import { useCartStore } from "@/store/cart-store";
+import { useSettingsStore } from "@/store/settings-store";
+import { usePublicCompanyStore } from "@/store/public-company-store";
 import { calculateItemCount } from "@/lib/pricing";
 import { cn } from "@/lib/cn";
 
 export function WhatsAppFloatingButton() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { companySlug } = useParams();
+  const catalogPath = companySlug ? `/${companySlug}` : "/";
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const hasCartItems = useCartStore((state) => calculateItemCount(state.items) > 0);
-  const minimized = hasCartItems && location.pathname === "/";
+  const minimized = hasCartItems && location.pathname === catalogPath;
+  const whatsappNumber = useSettingsStore((state) => state.settings?.whatsappNumber);
+  const displayName = usePublicCompanyStore((state) => state.company?.displayName) ?? "";
 
   useEffect(() => {
     if (!open) return;
@@ -35,12 +40,14 @@ export function WhatsAppFloatingButton() {
 
   if (location.pathname.startsWith("/admin")) return null;
 
-  const whatsappLink = buildWhatsAppLink(CONTACT.whatsappNumber, "Olá! Quero fazer um pedido no catálogo Saboriza.");
+  const whatsappLink = whatsappNumber
+    ? buildWhatsAppLink(whatsappNumber, `Olá! Quero fazer um pedido no catálogo ${displayName}.`)
+    : "";
 
   function goToCatalog() {
     setOpen(false);
-    if (location.pathname !== "/") {
-      navigate("/");
+    if (location.pathname !== catalogPath) {
+      navigate(catalogPath);
       return;
     }
     document.getElementById("destaques")?.scrollIntoView({ behavior: "smooth" });
@@ -50,7 +57,7 @@ export function WhatsAppFloatingButton() {
     <div ref={containerRef} className="fixed bottom-6 right-6 z-40 flex flex-col items-end">
       {open && (
         <div className="mb-3 w-72 overflow-hidden rounded-2xl border border-forest-950/10 bg-cream-50 p-2 shadow-2xl">
-          <p className="px-3 pb-2 pt-1 text-xs font-bold uppercase tracking-wide text-ink-700/50">
+          <p className="px-3 pb-2 pt-1 text-xs font-bold uppercase tracking-wide text-ink-muted">
             Como você prefere pedir?
           </p>
           <button
@@ -60,22 +67,24 @@ export function WhatsAppFloatingButton() {
             <ShoppingBag size={18} className="mt-0.5 shrink-0 text-forest-700" />
             <span className="flex flex-col">
               <span className="text-sm font-bold text-ink-900">Escolher produtos no catálogo</span>
-              <span className="text-xs text-ink-700/60">Monte o pedido e finalize por aqui</span>
+              <span className="text-xs text-ink-muted">Monte o pedido e finalize por aqui</span>
             </span>
           </button>
-          <a
-            href={whatsappLink}
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => setOpen(false)}
-            className="flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-forest-950/5"
-          >
-            <MessageCircle size={18} className="mt-0.5 shrink-0 text-forest-700" />
-            <span className="flex flex-col">
-              <span className="text-sm font-bold text-ink-900">Falar no WhatsApp</span>
-              <span className="text-xs text-ink-700/60">Atendimento direto com um vendedor</span>
-            </span>
-          </a>
+          {whatsappNumber && (
+            <a
+              href={whatsappLink}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-forest-950/5"
+            >
+              <MessageCircle size={18} className="mt-0.5 shrink-0 text-forest-700" />
+              <span className="flex flex-col">
+                <span className="text-sm font-bold text-ink-900">Falar no WhatsApp</span>
+                <span className="text-xs text-ink-muted">Atendimento direto com um vendedor</span>
+              </span>
+            </a>
+          )}
         </div>
       )}
 

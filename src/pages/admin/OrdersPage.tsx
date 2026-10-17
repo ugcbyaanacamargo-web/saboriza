@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Building2, Plus, Search, Tag } from "lucide-react";
+import { Building2, PackageSearch, Plus, Search, Tag } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
-import { ORDER_STATUS_OPTIONS, groupOrdersByDay } from "@/lib/order-status";
+import { subscribeToTables } from "@/lib/realtime";
+import { OPERATIONAL_SUBSTATUS_LABELS, ORDER_STATUS_OPTIONS, groupOrdersByDay, operationalSubstatus } from "@/lib/order-status";
 import { useOrdersStore } from "@/store/orders-store";
 import { AdminState } from "@/components/admin/AdminState";
 import { OrderStatusBadge } from "@/components/admin/OrderStatusBadge";
@@ -10,7 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import type { Order, OrderStatus } from "@/types/order";
 
-type StatusFilter = "ALL" | OrderStatus;
+type StatusFilter = "ALL" | OrderStatus | "A_FATURAR";
 
 function formatOrderDate(iso: string) {
   const date = new Date(iso);
@@ -19,29 +20,55 @@ function formatOrderDate(iso: string) {
   return isToday ? `Hoje, ${time}` : `${date.toLocaleDateString("pt-BR")}, ${time}`;
 }
 
-function OrderCard({ order }: { order: Order }) {
+function OperationalSubstatusBadge({ order }: { order: Order }) {
+  const substatus = operationalSubstatus(order);
+  if (!substatus) return null;
+  const isActive = substatus === "em_separacao" || substatus === "em_carregamento";
   return (
-    <Link
-      to={`/admin/pedidos/${order.id}`}
-      className="flex flex-col overflow-hidden rounded-3xl border border-forest-950/10 bg-white transition-colors hover:border-forest-700/30 hover:bg-forest-950/[0.02]"
-    >
-      <div className="flex items-center justify-between gap-3 bg-ink-900/5 px-4 py-3 sm:px-5">
-        <span className="text-base font-extrabold text-forest-950">{order.number}</span>
-        <OrderStatusBadge status={order.status} />
-      </div>
-      <div className="flex flex-col gap-2 px-4 py-4 sm:px-5">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-          <Building2 size={15} className="shrink-0 text-ink-muted" />
-          {order.customer.company}
+    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-ink-700">
+      <span className={cn("h-2 w-2 shrink-0 rounded-full", isActive ? "animate-pulse bg-red-500" : "bg-green-500")} aria-hidden />
+      {OPERATIONAL_SUBSTATUS_LABELS[substatus]}
+    </span>
+  );
+}
+
+function OrderCard({ order }: { order: Order }) {
+  const showSeparar = order.status === "CONFIRMED" && !order.separationFinishedAt;
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-3xl border border-forest-950/10 bg-white transition-colors hover:border-forest-700/30">
+      <Link to={`/admin/pedidos/${order.id}`} className="flex flex-col hover:bg-forest-950/[0.02]">
+        <div className="flex items-center justify-between gap-3 bg-ink-900/5 px-4 py-3 sm:px-5">
+          <span className="text-base font-extrabold text-forest-950">{order.number}</span>
+          <div className="flex flex-col items-end gap-1">
+            <OrderStatusBadge status={order.status} />
+            <OperationalSubstatusBadge order={order} />
+          </div>
         </div>
-        <div className="flex items-center gap-2 text-sm text-ink-700/70">
-          <Tag size={15} className="shrink-0 text-ink-muted" />
-          {order.customer.tradeName || order.customer.name}
+        <div className="flex flex-col gap-2 px-4 py-4 sm:px-5">
+          <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
+            <Building2 size={15} className="shrink-0 text-ink-muted" />
+            {order.customer.company}
+          </div>
+          <div className="flex items-center gap-2 text-sm text-ink-700/70">
+            <Tag size={15} className="shrink-0 text-ink-muted" />
+            {order.customer.tradeName || order.customer.name}
+          </div>
+          <span className="text-sm font-bold text-ink-900">{formatCurrency(order.total)}</span>
+          <span className="text-xs text-ink-muted">{formatOrderDate(order.createdAt)}</span>
         </div>
-        <span className="text-sm font-bold text-ink-900">{formatCurrency(order.total)}</span>
-        <span className="text-xs text-ink-muted">{formatOrderDate(order.createdAt)}</span>
+      </Link>
+      <div className="flex gap-2 border-t border-forest-950/10 px-4 py-2.5 sm:px-5">
+        {showSeparar && (
+          <Link
+            to={`/admin/separa-confere/${order.id}`}
+            className="flex items-center gap-1.5 rounded-lg bg-forest-950/5 px-3 py-1.5 text-xs font-bold text-forest-800 hover:bg-forest-950/10"
+          >
+            <PackageSearch size={14} /> Separar
+          </Link>
+        )}
       </div>
-    </Link>
+    </div>
   );
 }
 
@@ -54,17 +81,24 @@ export function OrdersPage() {
 
   useEffect(() => {
     fetchOrders();
+    return subscribeToTables("pedidos-lista", ["orders", "order_items"], fetchOrders);
   }, [fetchOrders]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return orders.filter((order) => {
-      const matchesStatus = statusFilter === "ALL" || order.status === statusFilter;
+      const matchesStatus =
+        statusFilter === "ALL"
+          ? true
+          : statusFilter === "A_FATURAR"
+            ? operationalSubstatus(order) === "a_faturar"
+            : order.status === statusFilter;
       const matchesQuery =
         !query ||
         order.number.toLowerCase().includes(query) ||
         order.customer.name.toLowerCase().includes(query) ||
-        order.customer.company.toLowerCase().includes(query);
+        order.customer.company.toLowerCase().includes(query) ||
+        (operationalSubstatus(order) === "a_faturar" && "a faturar".includes(query));
       return matchesStatus && matchesQuery;
     });
   }, [orders, search, statusFilter]);
@@ -78,22 +112,32 @@ export function OrdersPage() {
       IN_REVIEW: 0,
       CONFIRMED: 0,
       COMPLETED: 0,
+      FINALIZADO: 0,
       CANCELLED: 0,
+      A_FATURAR: 0,
     };
     orders.forEach((order) => {
       map[order.status] += 1;
+      if (operationalSubstatus(order) === "a_faturar") map.A_FATURAR += 1;
     });
     return map;
   }, [orders]);
 
   const filterTabs: { value: StatusFilter; label: string }[] = [
     { value: "ALL", label: "Todos" },
+    { value: "A_FATURAR", label: "A Faturar" },
     ...ORDER_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
   ];
 
-  // "Novo" plural fica estranho ("Novos" já é o rótulo natural pra essa aba)
-  const tabLabel = (tab: (typeof filterTabs)[number]) =>
-    tab.value === "NEW" ? "Novos" : tab.value === "CONFIRMED" ? "Confirmados" : tab.value === "COMPLETED" ? "Finalizados" : tab.label;
+  // Plural fica mais natural que o singular do enum pra rótulo de aba
+  const tabPluralLabels: Partial<Record<OrderStatus, string>> = {
+    NEW: "Novos",
+    IN_REVIEW: "Orçamentos",
+    CONFIRMED: "Pedidos",
+    COMPLETED: "Faturados",
+    FINALIZADO: "Finalizados",
+  };
+  const tabLabel = (tab: (typeof filterTabs)[number]) => tabPluralLabels[tab.value as OrderStatus] ?? tab.label;
 
   return (
     <div className="flex flex-col gap-6">
