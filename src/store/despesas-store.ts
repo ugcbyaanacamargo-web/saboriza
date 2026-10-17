@@ -1,0 +1,634 @@
+import { create } from "zustand";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
+import { resolveCurrentCompanyId } from "@/lib/current-company";
+
+export type ExpenseNature = "OPERACIONAL" | "INVESTIMENTO" | "SALARIO" | "OUTRO";
+export type ExpenseStatus = "ABERTO" | "AGENDADO" | "PAGO" | "ATRASADO" | "BLOQUEADO";
+export type ExpenseOrigin = "stock" | "asset" | "expense" | "salary" | "commission" | "partner";
+export type ExpensePattern = "fixed" | "variable" | "eventual";
+export type BlockType = "hold" | "skip_occurrence" | "end_recurrence";
+
+export interface Expense {
+  id: string;
+  description: string;
+  category: string;
+  subcategory: string | null;
+  itemDetail: string | null;
+  nature: ExpenseNature;
+  origin: ExpenseOrigin;
+  pattern: ExpensePattern;
+  employeeId: string | null;
+  partnerId: string | null;
+  amount: number;
+  paidAmount: number | null;
+  status: ExpenseStatus;
+  competence: string | null;
+  dueDate: string | null;
+  scheduledPaymentAt: string | null;
+  settledAt: string | null;
+  paidAt: string | null;
+  blockType: BlockType | null;
+  blockReason: string | null;
+  blockedAt: string | null;
+  originalExpenseId: string | null;
+  adjustmentReason: string | null;
+  sourceModule: string | null;
+  sourceEntityId: string | null;
+  partyName: string | null;
+  documentRef: string | null;
+  installmentNumber: number | null;
+  installmentCount: number | null;
+  paymentMethod: string | null;
+  createdAt: string;
+}
+
+export interface NewExpenseInput {
+  description: string;
+  category: string;
+  nature: ExpenseNature;
+  origin?: ExpenseOrigin;
+  pattern?: ExpensePattern;
+  amount: number;
+  dueDate?: string;
+  competence?: string;
+  employeeId?: string;
+  partnerId?: string;
+  partyName?: string;
+  documentRef?: string;
+}
+
+export interface SalaryObligation {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  competence: string;
+  baseSalary: number;
+  status: "ABERTO" | "PAGO" | "ATRASADO";
+  advancesPaid: number;
+  remaining: number;
+  dueDate: string | null;
+  dueDateSource: "payroll_calendar" | "competence_closing" | "legacy_convention" | "manual_adjustment" | null;
+}
+
+export interface SalaryAdvance {
+  id: string;
+  obligationId: string;
+  amount: number;
+  status: "SOLICITADO" | "PAGO" | "ESTORNADO";
+  requestedAt: string;
+  paidAt: string | null;
+  reversedAdvanceId: string | null;
+}
+
+export interface InvestmentFormationEntry {
+  id: string;
+  categoryId: string;
+  sourceExpenseId: string | null;
+  direction: "credit" | "debit" | "reversal";
+  amount: number;
+  competence: string;
+  occurredAt: string;
+}
+
+export type ExpensePeriod = "month" | "3m" | "6m" | "year" | "custom";
+export type EvolutionWindow = "3m" | "6m" | "1y";
+
+interface PeriodRange {
+  from: string; // yyyy-mm-dd
+  to: string; // yyyy-mm-dd
+}
+
+const ORIGIN_LABEL: Record<ExpenseOrigin, string> = {
+  stock: "Insumos e Mercadorias",
+  asset: "Bens e Investimentos",
+  expense: "Serviços e Outras Despesas",
+  salary: "Gestão Salarial",
+  commission: "Força de Vendas / Comissões",
+  partner: "Sócios e Retiradas",
+};
+
+function monthKey(dateStr: string): string {
+  return dateStr.slice(0, 7); // yyyy-mm
+}
+
+function addMonths(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function toIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+interface DespesasState {
+  expenses: Expense[];
+  obligations: SalaryObligation[];
+  advances: SalaryAdvance[];
+  formationLedger: InvestmentFormationEntry[];
+  status: "idle" | "loading" | "ready" | "error";
+  realtimeChannel: RealtimeChannel | null;
+
+  fetchAll: () => Promise<void>;
+  createExpense: (input: NewExpenseInput) => Promise<string | null>;
+  markExpensePaid: (id: string, paidAmount: number) => Promise<string | null>;
+
+  /** Vencimento explícito e obrigatório: nenhuma data é presumida (PRD V4.1 §5.3). */
+  generateObligation: (employeeId: string, competence: string, dueDate: string, dueDateSource?: "payroll_calendar" | "competence_closing") => Promise<string | null>;
+  changeSalaryDueDate: (obligationId: string, newDueDate: string, reason: string) => Promise<string | null>;
+  createAdvance: (obligationId: string, amount: number) => Promise<string | null>;
+  payAdvance: (id: string) => Promise<string | null>;
+  reverseAdvance: (id: string, reason?: string) => Promise<string | null>;
+
+  blockExpense: (id: string, blockType: BlockType, reason: string) => Promise<string | null>;
+  createExpenseAdjustment: (
+    originalId: string,
+    reason: string,
+    changes?: { amount?: number; category?: string; description?: string }
+  ) => Promise<string | null>;
+  createPartnerWithdrawal: (input: {
+    partnerId: string;
+    partnerName?: string;
+    description: string;
+    amount: number;
+    competence: string;
+    dueDate?: string;
+    pattern?: ExpensePattern;
+  }) => Promise<string | null>;
+  createServiceExpense: (input: {
+    description: string;
+    category: string;
+    amount: number;
+    competence: string;
+    dueDate?: string;
+    pattern?: ExpensePattern;
+    partyName?: string;
+    documentRef?: string;
+  }) => Promise<string | null>;
+  createAssetInvestment: (input: {
+    description: string;
+    categoryId: string;
+    amount: number;
+    competence: string;
+    dueDate?: string;
+    pattern?: ExpensePattern;
+  }) => Promise<string | null>;
+
+  // Read-model (agregações client-side sobre `expenses` já carregado)
+  /** `expenses` + folha salarial sintetizada de obligations/advances (BUG 01 — ver buildSalaryVirtualExpenses). */
+  getAllExpenses: () => Expense[];
+  getByPeriod: (period: ExpensePeriod, referenceDate?: Date, customRange?: PeriodRange) => Expense[];
+  getEvolution: (window: EvolutionWindow, referenceDate?: Date) => { month: string; label: string; total: number }[];
+  getByOrigin: (list?: Expense[]) => { origin: ExpenseOrigin; label: string; total: number }[];
+  getComposition: (list?: Expense[]) => { pattern: ExpensePattern; label: string; total: number; count: number }[];
+
+  subscribeRealtime: () => void;
+  unsubscribeRealtime: () => void;
+}
+
+function mapExpenseRow(e: Record<string, unknown>): Expense {
+  return {
+    id: e.id as string,
+    description: e.description as string,
+    category: e.category as string,
+    subcategory: (e.subcategory as string | null) ?? null,
+    itemDetail: (e.item_detail as string | null) ?? null,
+    nature: e.nature as ExpenseNature,
+    origin: (e.origin as ExpenseOrigin) ?? "expense",
+    pattern: (e.pattern as ExpensePattern) ?? "eventual",
+    employeeId: e.employee_id as string | null,
+    partnerId: e.partner_id as string | null,
+    amount: e.amount as number,
+    paidAmount: e.paid_amount as number | null,
+    status: e.status as ExpenseStatus,
+    competence: e.competence as string | null,
+    dueDate: e.due_date as string | null,
+    scheduledPaymentAt: e.scheduled_payment_at as string | null,
+    settledAt: e.settled_at as string | null,
+    paidAt: e.paid_at as string | null,
+    blockType: e.block_type as BlockType | null,
+    blockReason: e.block_reason as string | null,
+    blockedAt: e.blocked_at as string | null,
+    originalExpenseId: e.original_expense_id as string | null,
+    adjustmentReason: e.adjustment_reason as string | null,
+    sourceModule: e.source_module as string | null,
+    sourceEntityId: e.source_entity_id as string | null,
+    partyName: e.party_name as string | null,
+    documentRef: e.document_ref as string | null,
+    installmentNumber: (e.installment_number as number | null) ?? null,
+    installmentCount: (e.installment_count as number | null) ?? null,
+    paymentMethod: (e.payment_method as string | null) ?? null,
+    createdAt: e.created_at as string,
+  };
+}
+
+/**
+ * Folha salarial não escreve em `expenses` (ver RPC create_expense_launch) — o fato financeiro
+ * nasce uma única vez em salary_obligations/salary_advances. Para os indicadores, gráficos,
+ * Próximos Vencimentos e Despesas do Período enxergarem a folha sem duplicar nada, sintetizamos
+ * aqui uma linha por obrigação, nunca persistida. Clique nessas linhas abre o aprofundamento
+ * de Gestão Salarial (ver expenseDetailPath em shared.tsx), não o ExpenseDetailModal genérico.
+ */
+function buildSalaryVirtualExpenses(obligations: SalaryObligation[], advances: SalaryAdvance[]): Expense[] {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  return obligations.map((o) => {
+    const lastPaidAdvance = advances
+      .filter((a) => a.obligationId === o.id && a.status === "PAGO")
+      .sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? ""))[0];
+    const isSettled = o.remaining <= 0;
+    const isOverdue = !isSettled && !!o.dueDate && o.dueDate < todayIso;
+    const status: ExpenseStatus = isSettled ? "PAGO" : isOverdue ? "ATRASADO" : "ABERTO";
+    return {
+      id: `salary:${o.id}`,
+      description: `Folha salarial — ${o.employeeName}`,
+      category: "Gestão Salarial",
+      subcategory: null,
+      itemDetail: null,
+      nature: "SALARIO",
+      origin: "salary",
+      pattern: "fixed",
+      employeeId: o.employeeId,
+      partnerId: null,
+      amount: o.baseSalary,
+      paidAmount: o.advancesPaid,
+      status,
+      competence: o.competence,
+      dueDate: o.dueDate,
+      scheduledPaymentAt: null,
+      settledAt: isSettled ? lastPaidAdvance?.paidAt ?? null : null,
+      paidAt: lastPaidAdvance?.paidAt ?? null,
+      blockType: null,
+      blockReason: null,
+      blockedAt: null,
+      originalExpenseId: null,
+      adjustmentReason: null,
+      sourceModule: "salary_obligations",
+      sourceEntityId: o.employeeId,
+      partyName: o.employeeName,
+      documentRef: null,
+      installmentNumber: null,
+      installmentCount: null,
+      paymentMethod: null,
+      createdAt: o.competence,
+    };
+  });
+}
+
+export const useDespesasStore = create<DespesasState>((set, get) => ({
+  expenses: [],
+  obligations: [],
+  advances: [],
+  formationLedger: [],
+  status: "idle",
+  realtimeChannel: null,
+
+  fetchAll: async () => {
+    set({ status: "loading" });
+
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) {
+      set({ status: "error" });
+      return;
+    }
+
+    const [{ data: expenseRows, error: expenseError }, { data: obligationRows, error: obligationError }, { data: advanceRows }, { data: ledgerRows }] =
+      await Promise.all([
+        supabase.from("expenses").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
+        supabase
+          .from("salary_obligations")
+          .select("id, employee_id, competence, base_salary, status, due_date, due_date_source, employees(name)")
+          .eq("company_id", companyId)
+          .order("competence", { ascending: false }),
+        supabase.from("salary_advances").select("id, salary_obligation_id, amount, status, requested_at, paid_at, reversed_advance_id").eq("company_id", companyId),
+        supabase
+          .from("investment_formation_ledger")
+          .select("id, category_id, source_expense_id, direction, amount, competence, occurred_at")
+          .eq("company_id", companyId)
+          .order("occurred_at", { ascending: false }),
+      ]);
+
+    if (expenseError || obligationError) {
+      set({ status: "error" });
+      return;
+    }
+
+    const advances: SalaryAdvance[] = (advanceRows ?? []).map((a) => ({
+      id: a.id,
+      obligationId: a.salary_obligation_id,
+      amount: a.amount,
+      status: a.status as SalaryAdvance["status"],
+      requestedAt: a.requested_at,
+      paidAt: a.paid_at,
+      reversedAdvanceId: a.reversed_advance_id,
+    }));
+
+    const reversedOriginalIds = new Set(advances.filter((a) => a.status === "ESTORNADO" && a.reversedAdvanceId).map((a) => a.reversedAdvanceId));
+    const paidByObligation = new Map<string, number>();
+    advances.forEach((a) => {
+      if (a.status !== "PAGO" || reversedOriginalIds.has(a.id)) return;
+      paidByObligation.set(a.obligationId, (paidByObligation.get(a.obligationId) ?? 0) + a.amount);
+    });
+
+    set({
+      expenses: (expenseRows ?? []).map(mapExpenseRow),
+      obligations: (obligationRows ?? []).map((o) => {
+        const paid = paidByObligation.get(o.id) ?? 0;
+        return {
+          id: o.id,
+          employeeId: o.employee_id,
+          employeeName: (o.employees as unknown as { name: string } | null)?.name ?? "-----",
+          competence: o.competence,
+          baseSalary: o.base_salary,
+          status: o.status as SalaryObligation["status"],
+          advancesPaid: paid,
+          remaining: o.base_salary - paid,
+          dueDate: o.due_date,
+          dueDateSource: o.due_date_source as SalaryObligation["dueDateSource"],
+        };
+      }),
+      advances,
+      formationLedger: (ledgerRows ?? []).map((l) => ({
+        id: l.id,
+        categoryId: l.category_id,
+        sourceExpenseId: l.source_expense_id,
+        direction: l.direction as InvestmentFormationEntry["direction"],
+        amount: l.amount,
+        competence: l.competence,
+        occurredAt: l.occurred_at,
+      })),
+      status: "ready",
+    });
+  },
+
+  createExpense: async (input) => {
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) return "Não foi possível identificar a empresa";
+    const { error } = await supabase.from("expenses").insert({
+      company_id: companyId,
+      description: input.description,
+      category: input.category,
+      nature: input.nature,
+      origin: input.origin ?? "expense",
+      pattern: input.pattern ?? "eventual",
+      amount: input.amount,
+      due_date: input.dueDate || null,
+      competence: input.competence || null,
+      employee_id: input.employeeId || null,
+      partner_id: input.partnerId || null,
+      party_name: input.partyName || null,
+      document_ref: input.documentRef || null,
+    });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  markExpensePaid: async (id, paidAmount) => {
+    const { data: expense } = await supabase.from("expenses").select("amount, paid_amount, due_date").eq("id", id).maybeSingle();
+    const alreadyPaid = expense?.paid_amount ?? 0;
+    const total = expense?.amount ?? paidAmount;
+    const newPaid = alreadyPaid + paidAmount;
+    const isOverdue = !!expense?.due_date && expense.due_date < new Date().toISOString().slice(0, 10);
+    const nowIso = new Date().toISOString();
+    const isSettled = newPaid >= total;
+    const { error } = await supabase
+      .from("expenses")
+      .update({
+        status: isSettled ? "PAGO" : isOverdue ? "ATRASADO" : "ABERTO",
+        paid_at: nowIso,
+        paid_amount: newPaid,
+        settled_at: isSettled ? nowIso : null,
+      })
+      .eq("id", id);
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  generateObligation: async (employeeId, competence, dueDate, dueDateSource = "competence_closing") => {
+    if (!dueDate) return "Informe o vencimento da folha desta competência";
+    const { error } = await supabase.rpc("generate_salary_obligation", {
+      p_employee_id: employeeId,
+      p_competence: competence,
+      p_due_date: dueDate,
+      p_due_date_source: dueDateSource,
+    });
+    if (error) return error.message.replace(/^VENCIMENTO_OBRIGATORIO: /, "");
+    await get().fetchAll();
+    return null;
+  },
+
+  changeSalaryDueDate: async (obligationId, newDueDate, reason) => {
+    const { error } = await supabase.rpc("change_salary_due_date", {
+      p_obligation_id: obligationId,
+      p_new_due_date: newDueDate,
+      p_reason: reason,
+    });
+    if (error) return error.message.replace(/^VENCIMENTO_OBRIGATORIO: /, "");
+    await get().fetchAll();
+    return null;
+  },
+
+  createAdvance: async (obligationId, amount) => {
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) return "Não foi possível identificar a empresa";
+    const { error } = await supabase
+      .from("salary_advances")
+      .insert({ salary_obligation_id: obligationId, amount, status: "SOLICITADO", company_id: companyId });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  payAdvance: async (id) => {
+    const { error } = await supabase.rpc("pay_salary_advance", { p_advance_id: id });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  reverseAdvance: async (id, reason) => {
+    const { error } = await supabase.rpc("reverse_salary_advance", { p_advance_id: id, p_reason: reason });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  blockExpense: async (id, blockType, reason) => {
+    const { error } = await supabase.rpc("block_expense", { p_expense_id: id, p_block_type: blockType, p_reason: reason });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  createExpenseAdjustment: async (originalId, reason, changes) => {
+    const { error } = await supabase.rpc("create_expense_adjustment", {
+      p_original_expense_id: originalId,
+      p_reason: reason,
+      p_new_amount: changes?.amount ?? undefined,
+      p_new_category: changes?.category ?? undefined,
+      p_new_description: changes?.description ?? undefined,
+    });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  createPartnerWithdrawal: async (input) => {
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) return "Não foi possível identificar a empresa";
+    const { error } = await supabase.from("expenses").insert({
+      company_id: companyId,
+      description: input.description,
+      category: "Retirada de sócio",
+      nature: "OUTRO",
+      origin: "partner",
+      pattern: input.pattern ?? "eventual",
+      amount: input.amount,
+      competence: input.competence,
+      due_date: input.dueDate || null,
+      partner_id: input.partnerId,
+      party_name: input.partnerName || null,
+    });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  createServiceExpense: async (input) => {
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) return "Não foi possível identificar a empresa";
+    const { error } = await supabase.from("expenses").insert({
+      company_id: companyId,
+      description: input.description,
+      category: input.category,
+      nature: "OPERACIONAL",
+      origin: "expense",
+      pattern: input.pattern ?? "eventual",
+      amount: input.amount,
+      competence: input.competence,
+      due_date: input.dueDate || null,
+      party_name: input.partyName || null,
+      document_ref: input.documentRef || null,
+    });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  createAssetInvestment: async (input) => {
+    const { error } = await supabase.rpc("create_asset_investment", {
+      p_description: input.description,
+      p_category_id: input.categoryId,
+      p_amount: input.amount,
+      p_competence: input.competence,
+      p_due_date: input.dueDate ?? undefined,
+      p_pattern: input.pattern ?? "eventual",
+      p_idempotency_key: undefined,
+    });
+    if (error) return error.message;
+    await get().fetchAll();
+    return null;
+  },
+
+  getAllExpenses: () => {
+    const { expenses, obligations, advances } = get();
+    return [...expenses, ...buildSalaryVirtualExpenses(obligations, advances)];
+  },
+
+  getByPeriod: (period, referenceDate = new Date(), customRange) => {
+    const expenses = get().getAllExpenses();
+    let from: string;
+    let to: string;
+
+    if (period === "custom" && customRange) {
+      from = customRange.from;
+      to = customRange.to;
+    } else if (period === "month") {
+      from = toIsoDate(new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1));
+      to = toIsoDate(new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0));
+    } else if (period === "3m") {
+      from = toIsoDate(addMonths(referenceDate, -2));
+      to = toIsoDate(new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0));
+    } else if (period === "6m") {
+      from = toIsoDate(addMonths(referenceDate, -5));
+      to = toIsoDate(new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0));
+    } else {
+      from = toIsoDate(new Date(referenceDate.getFullYear(), 0, 1));
+      to = toIsoDate(new Date(referenceDate.getFullYear(), 11, 31));
+    }
+
+    // Visão por VENCIMENTO (BUG 02 §5): cada parcela cai no mês do seu próprio due_date, não
+    // no mês de competência da compra original — senão uma compra em 5x apareceria inteira
+    // no mês do cadastro. Competência continua guardada no registro para exibição (§3.1/§8),
+    // só não é mais o critério de período desta listagem/indicadores.
+    return expenses.filter((e) => {
+      const ref = e.dueDate ?? e.competence;
+      return ref && ref >= from && ref <= to;
+    });
+  },
+
+  getEvolution: (window, referenceDate = new Date()) => {
+    const expenses = get().getAllExpenses();
+    const monthsCount = window === "3m" ? 3 : window === "6m" ? 6 : 12;
+    const months: { month: string; label: string; total: number }[] = [];
+
+    for (let i = monthsCount - 1; i >= 0; i--) {
+      const d = addMonths(referenceDate, -i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleDateString("pt-BR", { month: "short", year: i === monthsCount - 1 || d.getMonth() === 0 ? "2-digit" : undefined });
+      const total = expenses.filter((e) => e.competence && monthKey(e.competence) === key).reduce((sum, e) => sum + e.amount, 0);
+      months.push({ month: key, label, total });
+    }
+
+    return months;
+  },
+
+  getByOrigin: (list) => {
+    const expenses = list ?? get().getAllExpenses();
+    const totals = new Map<ExpenseOrigin, number>();
+    expenses.forEach((e) => totals.set(e.origin, (totals.get(e.origin) ?? 0) + e.amount));
+    return (Object.keys(ORIGIN_LABEL) as ExpenseOrigin[])
+      .map((origin) => ({ origin, label: ORIGIN_LABEL[origin], total: totals.get(origin) ?? 0 }))
+      .filter((o) => o.total > 0);
+  },
+
+  getComposition: (list) => {
+    const expenses = list ?? get().getAllExpenses();
+    const groups: Record<ExpensePattern, { total: number; count: number }> = {
+      fixed: { total: 0, count: 0 },
+      variable: { total: 0, count: 0 },
+      eventual: { total: 0, count: 0 },
+    };
+    expenses.forEach((e) => {
+      groups[e.pattern].total += e.amount;
+      groups[e.pattern].count += 1;
+    });
+    const labels: Record<ExpensePattern, string> = { fixed: "Recorrente fixa", variable: "Recorrente variável", eventual: "Eventual" };
+    return (Object.keys(groups) as ExpensePattern[]).map((pattern) => ({
+      pattern,
+      label: labels[pattern],
+      total: groups[pattern].total,
+      count: groups[pattern].count,
+    }));
+  },
+
+  subscribeRealtime: () => {
+    if (get().realtimeChannel) return;
+    const channel = supabase
+      .channel("despesas")
+      .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => get().fetchAll())
+      .on("postgres_changes", { event: "*", schema: "public", table: "salary_obligations" }, () => get().fetchAll())
+      .on("postgres_changes", { event: "*", schema: "public", table: "salary_advances" }, () => get().fetchAll())
+      .on("postgres_changes", { event: "*", schema: "public", table: "investment_formation_ledger" }, () => get().fetchAll())
+      .subscribe();
+    set({ realtimeChannel: channel });
+  },
+
+  unsubscribeRealtime: () => {
+    const channel = get().realtimeChannel;
+    if (channel) {
+      supabase.removeChannel(channel);
+      set({ realtimeChannel: null });
+    }
+  },
+}));

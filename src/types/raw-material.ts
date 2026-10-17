@@ -10,6 +10,14 @@ export const COST_BASIS_LABELS: Record<CostBasis, string> = {
   manual: "Custo manual",
 };
 
+export const RAW_MATERIAL_GROUPS = ["MATERIAL", "PACKAGING", "SUPPLY"] as const;
+export type RawMaterialGroup = (typeof RAW_MATERIAL_GROUPS)[number];
+export const RAW_MATERIAL_GROUP_LABEL: Record<RawMaterialGroup, string> = {
+  MATERIAL: "Matéria-prima",
+  PACKAGING: "Embalagem",
+  SUPPLY: "Insumo",
+};
+
 export interface RawMaterial {
   id: string;
   code: string;
@@ -33,13 +41,17 @@ export interface RawMaterial {
   primarySupplierId: string | null;
   isActive: boolean;
   unitLocked: boolean;
+  gtin: string;
+  groupKind: RawMaterialGroup;
+  lastPurchaseCost: number | null;
+  lastPurchaseDate: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export type RawMaterialInput = Omit<
   RawMaterial,
-  "id" | "code" | "currentStock" | "avgCost" | "unitLocked" | "createdAt" | "updatedAt"
+  "id" | "code" | "currentStock" | "avgCost" | "unitLocked" | "lastPurchaseCost" | "lastPurchaseDate" | "createdAt" | "updatedAt"
 >;
 
 export type StockStatus = "ok" | "low" | "out";
