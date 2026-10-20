@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import { resolveCurrentCompanyId } from "@/lib/current-company";
 import { productionRecordFromRow } from "@/lib/mappers/production-mapper";
 import { useRawMaterialsStore } from "@/store/raw-materials-store";
 import { useCatalogStore } from "@/store/catalog-store";
@@ -12,7 +13,13 @@ interface ProductionState {
   status: "idle" | "loading" | "ready" | "error";
   fetchRecords: () => Promise<void>;
   fetchProductStock: (productIds: string[]) => Promise<void>;
-  registerProduction: (productId: string, packsQuantity: number) => Promise<{ record: ProductionRecord | null; error: string | null }>;
+  confirmProductionRelease: (
+    productId: string,
+    packsQuantity: number,
+    urgentDemandId: string | null,
+    floorExecutionId: string | null,
+    idempotencyKey: string
+  ) => Promise<{ record: ProductionRecord | null; error: string | null }>;
   refreshAfterProduction: (productIds: string[]) => Promise<void>;
 }
 
@@ -23,7 +30,12 @@ export const useProductionStore = create<ProductionState>()((set) => ({
 
   fetchRecords: async () => {
     set({ status: "loading" });
-    const { data, error } = await supabase.from("production_records").select("*").order("created_at", { ascending: false });
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) {
+      set({ status: "error" });
+      return;
+    }
+    const { data, error } = await supabase.from("production_records").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
 
     if (error) {
       toast.error("Não foi possível carregar os registros de produção");
@@ -46,13 +58,19 @@ export const useProductionStore = create<ProductionState>()((set) => ({
     }));
   },
 
-  registerProduction: async (productId, packsQuantity) => {
+  confirmProductionRelease: async (productId, packsQuantity, urgentDemandId, floorExecutionId, idempotencyKey) => {
     const { data, error } = await supabase
-      .rpc("create_production", { p_product_id: productId, p_packs_quantity: packsQuantity })
+      .rpc("confirm_production_release", {
+        p_product_id: productId,
+        p_packs_quantity: packsQuantity,
+        p_urgent_demand_id: urgentDemandId ?? undefined,
+        p_floor_execution_id: floorExecutionId ?? undefined,
+        p_idempotency_key: idempotencyKey,
+      })
       .single();
 
     if (error || !data) {
-      return { record: null, error: error?.message ?? "Não foi possível registrar a produção" };
+      return { record: null, error: error?.message ?? "Não foi possível confirmar a produção" };
     }
 
     const record = productionRecordFromRow(data);
