@@ -30,6 +30,8 @@ const emptyForm: RawMaterialInput = {
   costBasis: "avg_cost",
   manualCost: 0,
   primarySupplierId: null,
+  gtin: "",
+  groupKind: "MATERIAL",
   isActive: true,
 };
 
@@ -51,6 +53,8 @@ function toInput(material: RawMaterial): RawMaterialInput {
     costBasis: material.costBasis,
     manualCost: material.manualCost,
     primarySupplierId: material.primarySupplierId,
+    gtin: material.gtin,
+    groupKind: material.groupKind,
     isActive: material.isActive,
   };
 }
@@ -166,7 +170,7 @@ export function RawMaterialFormPage() {
           <ArrowLeft size={16} /> Voltar
         </Button>
         {isEditing && existingMaterial && (
-          <Link to={`/admin/materias-primas/entrada?insumo=${existingMaterial.id}`}>
+          <Link to={`/admin/despesas/nova?insumo=${existingMaterial.id}`}>
             <Button type="button" variant="outline">
               <PackagePlus size={16} /> Nova entrada
             </Button>

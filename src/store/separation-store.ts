@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { toast } from "sonner";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { rpcUntyped } from "@/lib/supabase-rpc";
+import { REFRESH_DEBOUNCE_MS, isMissingFunctionError, isNewInQueue, parseSnapshot } from "@/lib/separation-snapshot";
+import { resolveCurrentCompanyId } from "@/lib/current-company";
 import { useAdminAuthStore } from "@/store/admin-auth-store";
 import type { AdjustmentRequest, SeparationItem, SeparationOrder } from "@/types/separation";
 
@@ -29,6 +32,8 @@ interface ItemRow {
   presentation: string;
   weight_volume: string;
   total_units: number;
+  packs_quantity: number;
+  pack_quantity: number;
   separated_at: string | null;
 }
 
@@ -71,6 +76,8 @@ function buildOrders(orderRows: OrderRow[], itemRows: ItemRow[], productRows: Pr
           code: product?.code ?? null,
           gtin: product?.gtin || null,
           totalUnits: item.total_units,
+          packsQuantity: item.packs_quantity,
+          packQuantity: item.pack_quantity,
           separatedAt: item.separated_at,
         };
       });
@@ -106,9 +113,56 @@ function buildOrders(orderRows: OrderRow[], itemRows: ItemRow[], productRows: Pr
   });
 }
 
-async function loadOrdersWithDetails(statuses: OrderRow["status"][], limit?: number) {
-  let query = supabase.from("orders").select("*").in("status", statuses).order("created_at", { ascending: statuses.includes("CONFIRMED") });
-  if (limit) query = query.limit(limit);
+// Leitura/escrita pelas funções de dados mínimos (separation_*). Enquanto o banco não as tiver, segue no modo direto.
+let minimalMode: "unknown" | "yes" | "no" = "unknown";
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function loadSnapshot(scope: "queue" | "history" | "order", orderId?: string) {
+  if (minimalMode === "no") return null;
+  const companyId = await resolveCurrentCompanyId();
+  if (!companyId) throw new Error("Empresa não identificada");
+  const { data, error } = await rpcUntyped("separation_snapshot", { p_company_id: companyId, p_scope: scope, p_order_id: orderId ?? null });
+  if (error) {
+    if (isMissingFunctionError(error.message)) {
+      minimalMode = "no";
+      return null;
+    }
+    throw new Error(error.message);
+  }
+  const snapshot = parseSnapshot(data);
+  if (!snapshot) throw new Error("Resposta inesperada do servidor");
+  minimalMode = "yes";
+  return snapshot;
+}
+
+async function ensureMinimalMode(): Promise<boolean> {
+  if (minimalMode === "unknown") {
+    try {
+      await loadSnapshot("order", "00000000-0000-0000-0000-000000000000");
+    } catch {
+      // sem decisão (offline, sem acesso): segue no modo atual
+    }
+  }
+  return minimalMode === "yes";
+}
+
+async function loadOrdersWithDetails(statuses: OrderRow["status"][], options?: { limit?: number; onlyUnfinishedSeparation?: boolean }) {
+  const snapshot = await loadSnapshot(statuses.includes("CONFIRMED") ? "queue" : "history");
+  if (snapshot) {
+    return { orderRows: snapshot.orders as OrderRow[], itemRows: snapshot.items as ItemRow[], productRows: snapshot.products as ProductRow[], adjustmentRows: snapshot.adjustments as AdjustmentRow[] };
+  }
+
+  const companyId = await resolveCurrentCompanyId();
+  if (!companyId) throw new Error("Empresa não identificada");
+
+  let query = supabase
+    .from("orders")
+    .select("*")
+    .eq("company_id", companyId)
+    .in("status", statuses)
+    .order("created_at", { ascending: statuses.includes("CONFIRMED") });
+  if (options?.onlyUnfinishedSeparation) query = query.is("separation_finished_at", null);
+  if (options?.limit) query = query.limit(options.limit);
   const { data: orderRows, error: orderError } = await query;
   if (orderError || !orderRows) throw orderError;
 
@@ -118,7 +172,7 @@ async function loadOrdersWithDetails(statuses: OrderRow["status"][], limit?: num
   const [{ data: itemRows, error: itemError }, { data: adjustmentRows, error: adjustmentError }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id, order_id, product_id, product_name, presentation, weight_volume, total_units, separated_at")
+      .select("id, order_id, product_id, product_name, presentation, weight_volume, total_units, packs_quantity, pack_quantity, separated_at")
       .in("order_id", orderIds),
     supabase
       .from("order_adjustment_requests")
@@ -143,11 +197,15 @@ interface SeparationState {
   queueStatus: "idle" | "loading" | "ready" | "error";
   history: SeparationOrder[];
   historyStatus: "idle" | "loading" | "ready" | "error";
+  currentOrder: SeparationOrder | null;
+  currentOrderStatus: "idle" | "loading" | "ready" | "error";
   unseenOrderIds: Set<string>;
   realtimeChannel: RealtimeChannel | null;
+  signalChannel: RealtimeChannel | null;
 
   fetchQueue: () => Promise<void>;
   fetchHistory: () => Promise<void>;
+  fetchOrder: (orderId: string) => Promise<void>;
   subscribeRealtime: () => void;
   unsubscribeRealtime: () => void;
   markSeen: (orderId: string) => void;
@@ -157,8 +215,8 @@ interface SeparationState {
   confirmItem: (orderId: string, itemId: string) => Promise<void>;
   undoItem: (orderId: string, itemId: string) => Promise<void>;
   requestAdjustment: (orderId: string, itemId: string | null, message: string) => Promise<void>;
+  reportShortage: (orderId: string, itemId: string, separatedUnits: number, reason: string, commandId: string) => Promise<boolean>;
   resolveAdjustment: (adjustmentId: string) => Promise<void>;
-  finalizeOrder: (orderId: string) => Promise<boolean>;
 }
 
 export const useSeparationStore = create<SeparationState>()((set, get) => ({
@@ -166,13 +224,16 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
   queueStatus: "idle",
   history: [],
   historyStatus: "idle",
+  currentOrder: null,
+  currentOrderStatus: "idle",
   unseenOrderIds: new Set(),
   realtimeChannel: null,
+  signalChannel: null,
 
   fetchQueue: async () => {
     set({ queueStatus: "loading" });
     try {
-      const { orderRows, itemRows, productRows, adjustmentRows } = await loadOrdersWithDetails(["CONFIRMED"]);
+      const { orderRows, itemRows, productRows, adjustmentRows } = await loadOrdersWithDetails(["CONFIRMED"], { onlyUnfinishedSeparation: true });
       set({ queue: buildOrders(orderRows, itemRows, productRows, adjustmentRows), queueStatus: "ready" });
     } catch {
       toast.error("Não foi possível carregar a fila do Separa Confere");
@@ -183,7 +244,7 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
   fetchHistory: async () => {
     set({ historyStatus: "loading" });
     try {
-      const { orderRows, itemRows, productRows, adjustmentRows } = await loadOrdersWithDetails(["COMPLETED", "CANCELLED"], 100);
+      const { orderRows, itemRows, productRows, adjustmentRows } = await loadOrdersWithDetails(["COMPLETED", "CANCELLED"], { limit: 100 });
       const history = buildOrders(orderRows, itemRows, productRows, adjustmentRows).sort((a, b) => {
         const aTime = new Date(a.finishedAt ?? a.createdAt).getTime();
         const bTime = new Date(b.finishedAt ?? b.createdAt).getTime();
@@ -196,8 +257,71 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
     }
   },
 
+  fetchOrder: async (orderId) => {
+    set({ currentOrderStatus: "loading" });
+    try {
+      const snapshot = await loadSnapshot("order", orderId);
+      if (snapshot) {
+        const [order] = buildOrders(snapshot.orders as OrderRow[], snapshot.items as ItemRow[], snapshot.products as ProductRow[], snapshot.adjustments as AdjustmentRow[]);
+        set(order ? { currentOrder: order, currentOrderStatus: "ready" } : { currentOrder: null, currentOrderStatus: "error" });
+        return;
+      }
+    } catch {
+      toast.error("Não foi possível carregar o pedido");
+      set({ currentOrder: null, currentOrderStatus: "error" });
+      return;
+    }
+    const companyId = await resolveCurrentCompanyId();
+    if (!companyId) {
+      set({ currentOrder: null, currentOrderStatus: "error" });
+      return;
+    }
+    const { data: orderRow, error: orderError } = await supabase.from("orders").select("*").eq("id", orderId).eq("company_id", companyId).maybeSingle();
+    if (orderError || !orderRow) {
+      set({ currentOrder: null, currentOrderStatus: "error" });
+      return;
+    }
+    try {
+      const [{ data: itemRows, error: itemError }, { data: adjustmentRows, error: adjustmentError }] = await Promise.all([
+        supabase
+          .from("order_items")
+          .select("id, order_id, product_id, product_name, presentation, weight_volume, total_units, packs_quantity, pack_quantity, separated_at")
+          .eq("order_id", orderId),
+        supabase
+          .from("order_adjustment_requests")
+          .select("id, order_id, order_item_id, message, status, created_by, created_at")
+          .eq("order_id", orderId),
+      ]);
+      if (itemError || !itemRows) throw itemError;
+      if (adjustmentError || !adjustmentRows) throw adjustmentError;
+
+      const productIds = [...new Set(itemRows.map((item) => item.product_id).filter((id): id is string => Boolean(id)))];
+      const { data: productRows, error: productError } =
+        productIds.length > 0
+          ? await supabase.from("products").select("id, image_url, code, gtin").in("id", productIds)
+          : { data: [] as ProductRow[], error: null };
+      if (productError) throw productError;
+
+      const [order] = buildOrders([orderRow as OrderRow], itemRows as ItemRow[], (productRows ?? []) as ProductRow[], adjustmentRows as AdjustmentRow[]);
+      set({ currentOrder: order, currentOrderStatus: "ready" });
+    } catch {
+      toast.error("Não foi possível carregar o pedido");
+      set({ currentOrder: null, currentOrderStatus: "error" });
+    }
+  },
+
   subscribeRealtime: () => {
     if (get().realtimeChannel) return;
+    // Vários eventos seguidos (pedido + sinal) viram uma só releitura.
+    const refresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void get().fetchQueue();
+      }, REFRESH_DEBOUNCE_MS);
+    };
+
+    // Canal direto na tabela de pedidos: continua valendo para quem lê a tabela (gestor, administrador).
     const channel = supabase
       .channel("separa-confere-orders")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
@@ -206,18 +330,44 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
         if (newRow?.status === "CONFIRMED" && oldRow?.status !== "CONFIRMED") {
           set((state) => ({ unseenOrderIds: new Set(state.unseenOrderIds).add(newRow.id as string) }));
         }
-        get().fetchQueue();
+        refresh();
       })
       .subscribe();
     set({ realtimeChannel: channel });
+
+    // Canal de sinais: só identificadores e estado (sem telefone, valores, CNPJ). O cliente relê pela função autorizada.
+    void resolveCurrentCompanyId().then((companyId) => {
+      if (!companyId || !get().realtimeChannel) return;
+      const signals = supabase
+        .channel("separa-confere-signals")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "separation_signals", filter: `company_id=eq.${companyId}` },
+          (payload) => {
+            const signal = payload.new as { order_id?: string; status?: string; separation_finished?: boolean } | undefined;
+            if (signal?.order_id) {
+              const known = new Set(get().queue.map((order) => order.id));
+              if (isNewInQueue({ order_id: signal.order_id, status: signal.status ?? "", separation_finished: Boolean(signal.separation_finished) }, known)) {
+                set((state) => ({ unseenOrderIds: new Set(state.unseenOrderIds).add(signal.order_id as string) }));
+              }
+            }
+            refresh();
+          }
+        )
+        .subscribe();
+      set({ signalChannel: signals });
+    });
   },
 
   unsubscribeRealtime: () => {
-    const channel = get().realtimeChannel;
-    if (channel) {
-      supabase.removeChannel(channel);
-      set({ realtimeChannel: null });
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
     }
+    const { realtimeChannel, signalChannel } = get();
+    if (realtimeChannel) supabase.removeChannel(realtimeChannel);
+    if (signalChannel) supabase.removeChannel(signalChannel);
+    set({ realtimeChannel: null, signalChannel: null });
   },
 
   markSeen: (orderId) => {
@@ -229,6 +379,21 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
   },
 
   acceptOrder: async (orderId) => {
+    if (await ensureMinimalMode()) {
+      const { data, error } = await rpcUntyped("separation_accept_order", { p_order_id: orderId });
+      if (error) {
+        toast.error("Não foi possível aceitar o pedido");
+        return false;
+      }
+      if (data !== true) {
+        toast.error("Esse pedido já foi assumido por outro usuário");
+        await get().fetchQueue();
+        return false;
+      }
+      get().markSeen(orderId);
+      await get().fetchQueue();
+      return true;
+    }
     const name = currentOperatorName();
     const nowOrder = get().queue.find((order) => order.id === orderId);
     const isFirstAccept = !nowOrder?.startedAt;
@@ -258,16 +423,35 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
   },
 
   releaseOrder: async (orderId) => {
-    const { error } = await supabase.from("orders").update({ separation_responsible: null }).eq("id", orderId);
-    if (error) {
+    let failed: boolean;
+    if (await ensureMinimalMode()) {
+      const { data, error } = await rpcUntyped("separation_release_order", { p_order_id: orderId });
+      failed = Boolean(error) || data !== true;
+    } else {
+      const { error } = await supabase.from("orders").update({ separation_responsible: null }).eq("id", orderId);
+      failed = Boolean(error);
+    }
+    if (failed) {
       toast.error("Não foi possível liberar a separação");
       return;
     }
     toast.success("Separação liberada");
     await get().fetchQueue();
+    if (get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
   },
 
   confirmItem: async (orderId, itemId) => {
+    if (await ensureMinimalMode()) {
+      // A função também encerra a separação quando não há item pendente nem ajuste em aberto.
+      const { data, error } = await rpcUntyped("separation_set_item", { p_item_id: itemId, p_separated: true });
+      if (error || data !== true) {
+        toast.error("Não foi possível confirmar o item");
+        return;
+      }
+      await get().fetchQueue();
+      if (get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
+      return;
+    }
     const { data, error } = await supabase
       .from("order_items")
       .update({ separated_at: new Date().toISOString() })
@@ -279,96 +463,120 @@ export const useSeparationStore = create<SeparationState>()((set, get) => ({
       toast.error("Não foi possível confirmar o item");
       return;
     }
+
+    // Sem itens pendentes nem ajuste em aberto: separação termina sozinha, sem
+    // precisar de um clique manual de "finalizar" — e sem tocar no status do pedido.
+    const [{ data: remainingItems }, { data: pendingAdjustments }] = await Promise.all([
+      supabase.from("order_items").select("id").eq("order_id", orderId).is("separated_at", null),
+      supabase.from("order_adjustment_requests").select("id").eq("order_id", orderId).eq("status", "pending"),
+    ]);
+    if ((remainingItems?.length ?? 0) === 0 && (pendingAdjustments?.length ?? 0) === 0) {
+      await supabase
+        .from("orders")
+        .update({ separation_finished_at: new Date().toISOString(), separation_completed_by: currentOperatorName() })
+        .eq("id", orderId)
+        .is("separation_finished_at", null);
+    }
+
     await get().fetchQueue();
+    if (get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
   },
 
   undoItem: async (orderId, itemId) => {
-    const { data, error } = await supabase.from("order_items").update({ separated_at: null }).eq("id", itemId).select("id").maybeSingle();
-    if (error || !data) {
+    let failed: boolean;
+    if (await ensureMinimalMode()) {
+      const { data, error } = await rpcUntyped("separation_set_item", { p_item_id: itemId, p_separated: false });
+      failed = Boolean(error) || data !== true;
+    } else {
+      const { data, error } = await supabase.from("order_items").update({ separated_at: null }).eq("id", itemId).select("id").maybeSingle();
+      failed = Boolean(error) || !data;
+    }
+    if (failed) {
       toast.error("Não foi possível desfazer a confirmação");
       return;
     }
     await get().fetchQueue();
+    if (get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
   },
 
   requestAdjustment: async (orderId, itemId, message) => {
-    const { error } = await supabase.from("order_adjustment_requests").insert({
-      order_id: orderId,
-      order_item_id: itemId,
-      message,
-      created_by: currentOperatorName(),
-    });
-    if (error) {
+    let failed: boolean;
+    if (await ensureMinimalMode()) {
+      const { error } = await rpcUntyped("separation_request_adjustment", { p_order_id: orderId, p_item_id: itemId, p_message: message });
+      failed = Boolean(error);
+    } else {
+      const { error } = await supabase.from("order_adjustment_requests").insert({
+        order_id: orderId,
+        order_item_id: itemId,
+        message,
+        created_by: currentOperatorName(),
+      });
+      failed = Boolean(error);
+    }
+    if (failed) {
       toast.error("Não foi possível registrar o ajuste");
       return;
     }
     toast.success("Ajuste solicitado");
     await get().fetchQueue();
+    if (get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
+  },
+
+  reportShortage: async (orderId, itemId, separatedUnits, reason, commandId) => {
+    // Versão nova: o servidor grava a falta e o pedido de ajuste juntos e ignora o reenvio do mesmo comando.
+    const current = await rpcUntyped("separation_report_shortage", {
+      p_order_item_id: itemId,
+      p_separated_units: separatedUnits,
+      p_reason: reason,
+      p_command_id: commandId,
+    });
+    if (!current.error) {
+      toast.success("Falta registrada e enviada ao gestor");
+      await get().fetchQueue();
+      if (get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
+      return true;
+    }
+    if (!/p_command_id|PGRST202|schema cache/i.test(current.error.message)) {
+      toast.error(current.error.message || "Não foi possível registrar a falta");
+      return false;
+    }
+    // Banco ainda na versão anterior (sem comando idempotente): mantém o comportamento antigo.
+    const legacy = await rpcUntyped("separation_report_shortage", {
+      p_order_item_id: itemId,
+      p_separated_units: separatedUnits,
+      p_reason: reason,
+    });
+    if (legacy.error) {
+      toast.error(legacy.error.message || "Não foi possível registrar a falta");
+      return false;
+    }
+    await get().requestAdjustment(orderId, itemId, `Falta na separação: ${separatedUnits} separadas. ${reason}`.trim());
+    toast.success("Falta registrada e enviada ao gestor");
+    return true;
   },
 
   resolveAdjustment: async (adjustmentId) => {
-    const { data, error } = await supabase
-      .from("order_adjustment_requests")
-      .update({ status: "resolved", resolved_by: currentOperatorName() })
-      .eq("id", adjustmentId)
-      .eq("status", "pending")
-      .select("id")
-      .maybeSingle();
-    if (error || !data) {
+    const orderId = get().currentOrder?.pendingAdjustments.find((adjustment) => adjustment.id === adjustmentId)?.orderId;
+    let failed: boolean;
+    if (await ensureMinimalMode()) {
+      const { data, error } = await rpcUntyped("separation_resolve_adjustment", { p_adjustment_id: adjustmentId });
+      failed = Boolean(error) || data !== true;
+    } else {
+      const { data, error } = await supabase
+        .from("order_adjustment_requests")
+        .update({ status: "resolved", resolved_by: currentOperatorName() })
+        .eq("id", adjustmentId)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
+      failed = Boolean(error) || !data;
+    }
+    if (failed) {
       toast.error("Não foi possível marcar o ajuste como resolvido");
       return;
     }
     toast.success("Ajuste marcado como resolvido");
     await get().fetchQueue();
-  },
-
-  finalizeOrder: async (orderId) => {
-    const { data: items, error: itemsError } = await supabase.from("order_items").select("id, separated_at").eq("order_id", orderId);
-    if (itemsError) {
-      toast.error("Não foi possível verificar os itens do pedido");
-      return false;
-    }
-    if (items.some((item) => !item.separated_at)) {
-      toast.error("Ainda existem itens pendentes de separação");
-      return false;
-    }
-    const { data: adjustments, error: adjustmentsError } = await supabase
-      .from("order_adjustment_requests")
-      .select("id")
-      .eq("order_id", orderId)
-      .eq("status", "pending");
-    if (adjustmentsError) {
-      toast.error("Não foi possível verificar os ajustes do pedido");
-      return false;
-    }
-    if (adjustments.length > 0) {
-      toast.error("Existe ajuste pendente para esse pedido");
-      return false;
-    }
-
-    const { data, error } = await supabase
-      .from("orders")
-      .update({
-        status: "COMPLETED",
-        separation_finished_at: new Date().toISOString(),
-        separation_completed_by: currentOperatorName(),
-      })
-      .eq("id", orderId)
-      .eq("status", "CONFIRMED")
-      .select("id")
-      .maybeSingle();
-
-    if (error) {
-      toast.error("Não foi possível finalizar a conferência");
-      return false;
-    }
-    if (!data) {
-      toast.success("Conferência já estava finalizada");
-      await get().fetchQueue();
-      return true;
-    }
-    toast.success("Conferência finalizada");
-    await get().fetchQueue();
-    return true;
+    if (orderId && get().currentOrder?.id === orderId) await get().fetchOrder(orderId);
   },
 }));
